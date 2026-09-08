@@ -3,7 +3,7 @@ import 'package:get/get.dart';
 import '../../../../core/services/voice_player_service.dart';
 import '../../../../core/theme/app_colors.dart';
 
-class VoiceNotePlayer extends StatelessWidget {
+class VoiceNotePlayer extends GetView<VoicePlayerService> {
   final String audioUrl;
   final bool isMe;
 
@@ -15,15 +15,11 @@ class VoiceNotePlayer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final playerService = Get.isRegistered<VoicePlayerService>()
-        ? Get.find<VoicePlayerService>()
-        : Get.put(VoicePlayerService());
-
     return Obx(() {
-      final isCurrent = playerService.activeUrl.value == audioUrl;
-      final isPlaying = isCurrent && playerService.isPlaying.value;
-      final currentDuration = isCurrent ? playerService.duration.value : Duration.zero;
-      final currentPosition = isCurrent ? playerService.position.value : Duration.zero;
+      final isCurrent = controller.activeUrl.value == audioUrl;
+      final isPlaying = isCurrent && controller.isPlaying.value;
+      final currentDuration = isCurrent ? controller.duration.value : Duration.zero;
+      final currentPosition = isCurrent ? controller.position.value : Duration.zero;
 
       final totalSecs = currentDuration.inSeconds > 0 ? currentDuration.inSeconds.toDouble() : 1.0;
       final currentSecs = currentPosition.inSeconds.toDouble().clamp(0.0, totalSecs);
@@ -36,7 +32,7 @@ class VoiceNotePlayer extends StatelessWidget {
           children: [
             // Play/Pause Button
             GestureDetector(
-              onTap: () => playerService.togglePlay(audioUrl),
+              onTap: () => controller.togglePlay(audioUrl),
               child: Container(
                 width: 36,
                 height: 36,
@@ -76,7 +72,7 @@ class VoiceNotePlayer extends StatelessWidget {
                       max: totalSecs,
                       onChanged: (val) {
                         if (isCurrent) {
-                          playerService.seek(Duration(seconds: val.toInt()));
+                          controller.seek(Duration(seconds: val.toInt()));
                         }
                       },
                     ),
@@ -87,7 +83,7 @@ class VoiceNotePlayer extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          playerService.formatDuration(currentPosition),
+                          controller.formatDuration(currentPosition),
                           style: TextStyle(
                             fontSize: 10,
                             color: isMe
@@ -96,7 +92,7 @@ class VoiceNotePlayer extends StatelessWidget {
                           ),
                         ),
                         Text(
-                          playerService.formatDuration(currentDuration),
+                          controller.formatDuration(currentDuration),
                           style: TextStyle(
                             fontSize: 10,
                             color: isMe
