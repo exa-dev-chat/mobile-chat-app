@@ -9,6 +9,7 @@ import '../../../core/services/storage_service.dart';
 import '../../../routes/app_routes.dart';
 import '../models/user_model.dart';
 import '../repositories/auth_repository.dart';
+import '../../chat/controllers/chat_controller.dart';
 
 class AuthController extends GetxController {
   final AuthRepository repository;
@@ -287,6 +288,9 @@ class AuthController extends GetxController {
     } catch (e) {
       LoggerService.w('Logout remote call failed: $e', tag: 'AuthController');
     } finally {
+      if (Get.isRegistered<ChatController>()) {
+        Get.delete<ChatController>(force: true);
+      }
       await storageService.clearAuth();
       currentUser.value = null;
       SnackbarService.info('Anda telah keluar dari aplikasi.');

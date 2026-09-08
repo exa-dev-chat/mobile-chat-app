@@ -45,25 +45,37 @@ class ChatBinding extends Bindings {
     }
 
     // Upload & Voice Recorder Services
-    Get.lazyPut<UploadService>(
-      () => UploadService(apiClient: Get.find<ApiClient>()),
-    );
-    Get.lazyPut<VoiceRecorderService>(
-      () => VoiceRecorderService(),
-    );
+    if (!Get.isRegistered<UploadService>()) {
+      Get.lazyPut<UploadService>(
+        () => UploadService(apiClient: Get.find<ApiClient>()),
+        fenix: true,
+      );
+    }
+    if (!Get.isRegistered<VoiceRecorderService>()) {
+      Get.lazyPut<VoiceRecorderService>(
+        () => VoiceRecorderService(),
+        fenix: true,
+      );
+    }
 
     // Chat dependencies
-    Get.lazyPut<ChatRepository>(
-      () => ChatRepository(apiClient: Get.find<ApiClient>()),
-    );
-    Get.lazyPut<ChatController>(
-      () => ChatController(
-        repository: Get.find<ChatRepository>(),
-        storageService: Get.find<StorageService>(),
-        wsService: Get.find<WebSocketService>(),
-        uploadService: Get.find<UploadService>(),
-        voiceRecorderService: Get.find<VoiceRecorderService>(),
-      ),
-    );
+    if (!Get.isRegistered<ChatRepository>()) {
+      Get.lazyPut<ChatRepository>(
+        () => ChatRepository(apiClient: Get.find<ApiClient>()),
+        fenix: true,
+      );
+    }
+    if (!Get.isRegistered<ChatController>()) {
+      Get.put<ChatController>(
+        ChatController(
+          repository: Get.find<ChatRepository>(),
+          storageService: Get.find<StorageService>(),
+          wsService: Get.find<WebSocketService>(),
+          uploadService: Get.find<UploadService>(),
+          voiceRecorderService: Get.find<VoiceRecorderService>(),
+        ),
+        permanent: true,
+      );
+    }
   }
 }

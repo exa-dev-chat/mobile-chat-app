@@ -6,13 +6,61 @@ import '../../call/models/call_session_model.dart';
 import '../controllers/chat_controller.dart';
 import 'widgets/message_bubble.dart';
 
-class ChatDetailView extends GetView<ChatController> {
+class ChatDetailView extends StatefulWidget {
   final bool isEmbedded;
 
   const ChatDetailView({
     super.key,
     this.isEmbedded = false,
   });
+
+  @override
+  State<ChatDetailView> createState() => _ChatDetailViewState();
+}
+
+class _ChatDetailViewState extends State<ChatDetailView> {
+  late final TextEditingController _textController;
+  final _hasInputText = false.obs;
+  late final ChatController controller;
+  Worker? _chatWorker;
+
+  @override
+  void initState() {
+    super.initState();
+    controller = Get.find<ChatController>();
+    _textController = TextEditingController();
+    _textController.addListener(_onTextChanged);
+
+    // Clear input whenever active chat changes in split-screen mode
+    _chatWorker = ever(controller.activeChat, (_) {
+      _textController.clear();
+      _hasInputText.value = false;
+    });
+  }
+
+  void _onTextChanged() {
+    final has = _textController.text.trim().isNotEmpty;
+    if (_hasInputText.value != has) {
+      _hasInputText.value = has;
+    }
+  }
+
+  @override
+  void dispose() {
+    _chatWorker?.dispose();
+    _textController.removeListener(_onTextChanged);
+    _textController.dispose();
+    super.dispose();
+  }
+
+  void _handleSend() {
+    final text = _textController.text.trim();
+    if (text.isNotEmpty) {
+      controller.sendMessage(customContent: text);
+      _textController.clear();
+      _hasInputText.value = false;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -33,18 +81,31 @@ class ChatDetailView extends GetView<ChatController> {
 
       final title = chat.name ?? (chat.type == 'group' ? 'Grup Obrolan' : 'Direct Chat');
 
-      return Scaffold(
-        backgroundColor: AppColors.background,
-        appBar: AppBar(
-          backgroundColor: AppColors.surface,
-          elevation: 0,
-          leading: isEmbedded
-              ? null
-              : IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
-                  onPressed: () => Get.back(),
-                ),
-          title: Row(
+      return PopScope(
+        canPop: true,
+        onPopInvokedWithResult: (didPop, result) {
+          if (didPop) {
+            FocusManager.instance.primaryFocus?.unfocus();
+            if (controller.voiceRecorderService.isRecording.value) {
+              controller.cancelVoiceRecording();
+            }
+          }
+        },
+        child: Scaffold(
+          backgroundColor: AppColors.background,
+          appBar: AppBar(
+            backgroundColor: AppColors.surface,
+            elevation: 0,
+            leading: widget.isEmbedded
+                ? null
+                : IconButton(
+                    icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
+                    onPressed: () {
+                      FocusManager.instance.primaryFocus?.unfocus();
+                      Get.back();
+                    },
+                  ),
+            title: Row(
             children: [
               CircleAvatar(
                 radius: 18,
@@ -206,8 +267,9 @@ class ChatDetailView extends GetView<ChatController> {
             ),
           ],
         ),
-      );
-    });
+      ),
+    );
+  });
   }
 
   Widget _buildVoiceRecordingBar() {
@@ -270,10 +332,10 @@ class ChatDetailView extends GetView<ChatController> {
         // Text Field
         Expanded(
           child: TextField(
-            controller: controller.messageInputController,
+            controller: _textController,
             textInputAction: TextInputAction.send,
             onChanged: (_) => controller.notifyTyping(),
-            onSubmitted: (_) => controller.sendMessage(),
+            onSubmitted: (_) => _handleSend(),
             style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
             decoration: InputDecoration(
               hintText: 'Tulis pesan...',
@@ -299,51 +361,44 @@ class ChatDetailView extends GetView<ChatController> {
         const SizedBox(width: 6),
 
         // Mic or Send Action Button
-        ValueListenableBuilder<TextEditingValue>(
-          valueListenable: controller.messageInputController,
-          builder: (context, value, child) {
-            final hasText = value.text.trim().isNotEmpty;
+        Obx(() {
+          final hasText = _hasInputText.value;
 
-            if (hasText) {
-              return Obx(
-                () => Container(
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: AppColors.primaryGradient,
-                  ),
-                  child: IconButton(
-                    icon: controller.isSendingMessage.value
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                            ),
-                          )
-                        : const Icon(Icons.send_rounded, color: Colors.white, size: 20),
-                    onPressed: controller.isSendingMessage.value
-                        ? null
-                        : () => controller.sendMessage(),
-                  ),
-                ),
-              );
-            }
-
-            // Voice Record Trigger Button
+          if (hasText) {
             return Container(
-              decoration: BoxDecoration(
+              decoration: const BoxDecoration(
                 shape: BoxShape.circle,
-                color: AppColors.surfaceVariant,
+                gradient: AppColors.primaryGradient,
               ),
               child: IconButton(
-                icon: const Icon(Icons.mic_rounded, color: AppColors.primaryLight, size: 22),
-                tooltip: 'Rekam Pesan Suara',
-                onPressed: () => controller.startVoiceRecording(),
+                icon: controller.isSendingMessage.value
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                      )
+                    : const Icon(Icons.send_rounded, color: Colors.white, size: 20),
+                onPressed: controller.isSendingMessage.value ? null : _handleSend,
               ),
             );
-          },
-        ),
+          }
+
+          // Voice Record Trigger Button
+          return Container(
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: AppColors.surfaceVariant,
+            ),
+            child: IconButton(
+              icon: const Icon(Icons.mic_rounded, color: AppColors.primaryLight, size: 22),
+              tooltip: 'Rekam Pesan Suara',
+              onPressed: () => controller.startVoiceRecording(),
+            ),
+          );
+        }),
       ],
     );
   }
