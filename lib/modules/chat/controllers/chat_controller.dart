@@ -87,11 +87,13 @@ class ChatController extends GetxController {
     _msgSub = wsService.onMessage.listen((event) {
       final msgData = event['data'] ?? event;
       if (msgData is Map) {
-        final chatId = msgData['chat_id'] as int?;
+        final chatId = msgData['chat_id'] is int
+            ? msgData['chat_id'] as int
+            : int.tryParse('${msgData['chat_id']}');
         if (chatId != null && activeChat.value?.id == chatId) {
           final newMsg = MessageModel.fromJson(Map<String, dynamic>.from(msgData));
           // Avoid duplicate insertion
-          if (!messages.any((m) => m.id == newMsg.id && newMsg.id != 0)) {
+          if (!messages.any((m) => m.id == newMsg.id && newMsg.id.isNotEmpty)) {
             messages.add(newMsg);
             _scrollToBottom();
           }
@@ -286,8 +288,25 @@ class ChatController extends GetxController {
     final chat = activeChat.value;
     if (chat == null) return;
 
+    // Resolve target user ID for call signaling:
+    // 1. From chat.userId (for direct chat)
+    // 2. Or from other participant's senderId in loaded messages
+    int? targetId = chat.userId;
+    if (targetId == null || targetId == currentUserId || targetId == 0) {
+      final otherMsg = messages.firstWhereOrNull(
+        (m) => m.senderId != currentUserId && m.senderId != 0,
+      );
+      if (otherMsg != null) {
+        targetId = otherMsg.senderId;
+      }
+    }
+
+    if (targetId == null || targetId == 0) {
+      SnackbarService.warning('Pengguna tujuan tidak ditemukan untuk panggilan.');
+      return;
+    }
+
     final targetName = chat.name ?? 'Kontak';
-    final targetId = chat.id; // Or target member user id
 
     final callController = Get.find<CallController>();
     callController.startCall(

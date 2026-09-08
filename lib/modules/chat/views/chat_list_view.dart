@@ -228,7 +228,7 @@ class ChatListView extends GetView<ChatController> {
                   return ChatItemTile(
                     chat: chat,
                     isSelected: isSelected,
-                    isOnline: controller.onlineUsers.contains(chat.id),
+                    isOnline: chat.userId != null && controller.onlineUsers.contains(chat.userId),
                     onTap: () => controller.selectChat(chat, isWideScreen: isWide),
                   );
                 },

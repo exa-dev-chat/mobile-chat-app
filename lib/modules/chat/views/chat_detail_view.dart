@@ -111,11 +111,24 @@ class ChatDetailView extends GetView<ChatController> {
                           ),
                         );
                       }
+                      if (chat.type == 'group') {
+                        return const Text(
+                          'Grup',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textMuted,
+                          ),
+                        );
+                      }
+                      final isOnline = chat.userId != null &&
+                          controller.onlineUsers.contains(chat.userId);
                       return Text(
-                        chat.type == 'group' ? 'Grup' : 'Online',
-                        style: const TextStyle(
+                        isOnline ? 'Online' : 'Offline',
+                        style: TextStyle(
                           fontSize: 12,
-                          color: AppColors.onlineIndicator,
+                          color: isOnline
+                              ? AppColors.onlineIndicator
+                              : AppColors.textMuted,
                         ),
                       );
                     }),
