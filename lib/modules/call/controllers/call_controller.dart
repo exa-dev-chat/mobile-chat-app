@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:get/get.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/constants/api_endpoints.dart';
@@ -231,12 +232,44 @@ class CallController extends GetxController {
     }
   }
 
+  Future<bool> _checkAndRequestPermissions(CallType callType) async {
+    final permissions = <Permission>[Permission.microphone];
+    if (callType == CallType.video) {
+      permissions.add(Permission.camera);
+    }
+
+    final statuses = await permissions.request();
+    final allGranted = statuses.values.every((s) => s.isGranted);
+
+    if (!allGranted) {
+      final permanentlyDenied = statuses.values.any((s) => s.isPermanentlyDenied);
+
+      if (permanentlyDenied) {
+        SnackbarService.warning(
+          'Izin mikrofon/kamera diblokir. Silakan aktifkan di Pengaturan Aplikasi.',
+        );
+        openAppSettings();
+      } else {
+        SnackbarService.warning(
+          callType == CallType.video
+              ? 'Izin kamera dan mikrofon diperlukan untuk panggilan video.'
+              : 'Izin mikrofon diperlukan untuk melakukan panggilan.',
+        );
+      }
+      return false;
+    }
+    return true;
+  }
+
   Future<void> startCall({
     required int targetUserId,
     required String targetUserName,
     required CallType callType,
     int? chatId,
   }) async {
+    final hasPermission = await _checkAndRequestPermissions(callType);
+    if (!hasPermission) return;
+
     final callId = const Uuid().v4();
 
     currentCall.value = CallSessionModel(
@@ -249,67 +282,85 @@ class CallController extends GetxController {
       state: CallState.calling,
     );
 
-    await _initLocalMedia(callType);
-    await _createPeerConnection(targetUserId, callId);
+    try {
+      await _initLocalMedia(callType);
+      await _createPeerConnection(targetUserId, callId);
 
-    // Create SDP Offer
-    final offer = await _peerConnection!.createOffer({
-      'offerToReceiveAudio': true,
-      'offerToReceiveVideo': callType == CallType.video,
-    });
-    await _peerConnection!.setLocalDescription(offer);
+      // Create SDP Offer
+      final offer = await _peerConnection!.createOffer({
+        'offerToReceiveAudio': true,
+        'offerToReceiveVideo': callType == CallType.video,
+      });
+      await _peerConnection!.setLocalDescription(offer);
 
-    // Send offer to remote user via WebSocket
-    wsService.sendCallSignaling(
-      type: 'call:offer',
-      targetUserId: targetUserId,
-      data: {
-        'call_id': callId,
-        'media_type': callType == CallType.video ? 'video' : 'audio',
-        'sdp': {'sdp': offer.sdp, 'type': offer.type},
-      },
-    );
+      // Send offer to remote user via WebSocket
+      wsService.sendCallSignaling(
+        type: 'call:offer',
+        targetUserId: targetUserId,
+        data: {
+          'call_id': callId,
+          'media_type': callType == CallType.video ? 'video' : 'audio',
+          'sdp': {'sdp': offer.sdp, 'type': offer.type},
+        },
+      );
 
-    Get.to(() => const CallView());
+      Get.to(() => const CallView());
+    } catch (e) {
+      LoggerService.e('Failed to start call: $e', tag: 'CallController');
+      SnackbarService.error('Gagal memulai panggilan: $e');
+      _endCallCleanup(notifyRemote: false, status: 'failed');
+    }
   }
 
   Future<void> acceptCall() async {
     final call = currentCall.value;
     if (call == null || _pendingOfferSDP == null) return;
 
+    final hasPermission = await _checkAndRequestPermissions(call.callType);
+    if (!hasPermission) {
+      rejectCall();
+      return;
+    }
+
     Get.back(); // Dismiss dialog
     call.state = CallState.connected;
     currentCall.refresh();
 
-    await _initLocalMedia(call.callType);
-    await _createPeerConnection(call.targetUserId, call.callId);
+    try {
+      await _initLocalMedia(call.callType);
+      await _createPeerConnection(call.targetUserId, call.callId);
 
-    // Set remote offer SDP
-    final remoteDesc = RTCSessionDescription(
-      _pendingOfferSDP!['sdp'],
-      _pendingOfferSDP!['type'],
-    );
-    await _peerConnection!.setRemoteDescription(remoteDesc);
+      // Set remote offer SDP
+      final remoteDesc = RTCSessionDescription(
+        _pendingOfferSDP!['sdp'],
+        _pendingOfferSDP!['type'],
+      );
+      await _peerConnection!.setRemoteDescription(remoteDesc);
 
-    // Create SDP Answer
-    final answer = await _peerConnection!.createAnswer({
-      'offerToReceiveAudio': true,
-      'offerToReceiveVideo': call.callType == CallType.video,
-    });
-    await _peerConnection!.setLocalDescription(answer);
+      // Create SDP Answer
+      final answer = await _peerConnection!.createAnswer({
+        'offerToReceiveAudio': true,
+        'offerToReceiveVideo': call.callType == CallType.video,
+      });
+      await _peerConnection!.setLocalDescription(answer);
 
-    // Send answer via WebSocket
-    wsService.sendCallSignaling(
-      type: 'call:answer',
-      targetUserId: call.targetUserId,
-      data: {
-        'call_id': call.callId,
-        'sdp': {'sdp': answer.sdp, 'type': answer.type},
-      },
-    );
+      // Send answer via WebSocket
+      wsService.sendCallSignaling(
+        type: 'call:answer',
+        targetUserId: call.targetUserId,
+        data: {
+          'call_id': call.callId,
+          'sdp': {'sdp': answer.sdp, 'type': answer.type},
+        },
+      );
 
-    _startDurationTimer();
-    Get.to(() => const CallView());
+      _startDurationTimer();
+      Get.to(() => const CallView());
+    } catch (e) {
+      LoggerService.e('Failed to accept call: $e', tag: 'CallController');
+      SnackbarService.error('Gagal menerima panggilan: $e');
+      _endCallCleanup(notifyRemote: true, status: 'failed');
+    }
   }
 
   void rejectCall() {
@@ -356,10 +407,15 @@ class CallController extends GetxController {
           : false,
     };
 
-    _localStream = await rtc.navigator.mediaDevices.getUserMedia(
-      mediaConstraints,
-    );
-    localRenderer.srcObject = _localStream;
+    try {
+      _localStream = await rtc.navigator.mediaDevices.getUserMedia(
+        mediaConstraints,
+      );
+      localRenderer.srcObject = _localStream;
+    } catch (e) {
+      LoggerService.e('getUserMedia failed: $e', tag: 'CallController');
+      rethrow;
+    }
   }
 
   Future<void> _createPeerConnection(int targetUserId, String callId) async {
