@@ -12,6 +12,7 @@ import '../../../core/services/voice_recorder_service.dart';
 import '../../../core/services/websocket_service.dart';
 import '../../../routes/app_routes.dart';
 import '../../call/controllers/call_controller.dart';
+import '../../call/models/call_log_model.dart';
 import '../../call/models/call_session_model.dart';
 import '../models/chat_room_model.dart';
 import '../models/message_model.dart';
@@ -92,9 +93,28 @@ class ChatController extends GetxController {
             : int.tryParse('${msgData['chat_id']}');
         if (chatId != null && activeChat.value?.id == chatId) {
           final newMsg = MessageModel.fromJson(Map<String, dynamic>.from(msgData));
+          final newId = newMsg.id;
+
           // Avoid duplicate insertion
-          if (!messages.any((m) => m.id == newMsg.id && newMsg.id.isNotEmpty)) {
-            messages.add(newMsg);
+          final isDuplicate = messages.any((m) {
+            if (newId.isNotEmpty && m.id.isNotEmpty && m.id == newId) return true;
+            if (m.content == newMsg.content &&
+                m.senderId == newMsg.senderId &&
+                m.createdAt == newMsg.createdAt) {
+              return true;
+            }
+            if (isCallLog(m.content) && isCallLog(newMsg.content)) {
+              final log1 = parseCallLog(m.content);
+              final log2 = parseCallLog(newMsg.content);
+              if (log1 != null && log2 != null && log1.callId.isNotEmpty && log1.callId == log2.callId) {
+                return true;
+              }
+            }
+            return false;
+          });
+
+          if (!isDuplicate) {
+            messages.insert(0, newMsg);
             _scrollToBottom();
           }
         }
@@ -174,6 +194,12 @@ class ChatController extends GetxController {
       isLoadingMessages.value = true;
       messages.clear();
       final result = await repository.getMessages(chatId);
+      // Sort newest-first (index 0) so bottom-to-top rendering (reverse: true) shows newest at bottom
+      result.sort((a, b) {
+        final dateA = DateTime.tryParse(a.createdAt ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final dateB = DateTime.tryParse(b.createdAt ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return dateB.compareTo(dateA);
+      });
       messages.assignAll(result);
       _scrollToBottom();
     } catch (e) {
@@ -208,7 +234,21 @@ class ChatController extends GetxController {
         messageType: type,
       );
 
-      messages.add(sentMessage);
+      final isDuplicate = messages.any((m) {
+        if (sentMessage.id.isNotEmpty && m.id.isNotEmpty && m.id == sentMessage.id) return true;
+        if (isCallLog(m.content) && isCallLog(sentMessage.content)) {
+          final log1 = parseCallLog(m.content);
+          final log2 = parseCallLog(sentMessage.content);
+          if (log1 != null && log2 != null && log1.callId.isNotEmpty && log1.callId == log2.callId) {
+            return true;
+          }
+        }
+        return false;
+      });
+
+      if (!isDuplicate) {
+        messages.insert(0, sentMessage);
+      }
       _scrollToBottom();
     } catch (e) {
       LoggerService.e('Failed to send message: $e', tag: 'ChatController');
@@ -326,7 +366,7 @@ class ChatController extends GetxController {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (messageScrollController.hasClients) {
         messageScrollController.animateTo(
-          messageScrollController.position.maxScrollExtent,
+          0.0,
           duration: const Duration(milliseconds: 250),
           curve: Curves.easeOut,
         );

@@ -210,6 +210,7 @@ class ChatDetailView extends GetView<ChatController> {
 
                 return ListView.builder(
                   controller: controller.messageScrollController,
+                  reverse: true,
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   physics: const BouncingScrollPhysics(),
                   itemCount: messages.length,

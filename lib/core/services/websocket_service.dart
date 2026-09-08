@@ -95,9 +95,12 @@ class WebSocketService extends GetxService {
         _callSignalingController.add(data);
       } else if (type == 'new_message' || type == 'message') {
         _messageController.add(data);
+      } else if (type == 'new_message_notification' ||
+          type == 'message_updated_notification' ||
+          type == 'message_deleted_notification') {
+        // Notification-only events for notifications/badges, do not pass to active chat message stream
       } else {
         // Other events (join_chat_success, system, etc.)
-        _messageController.add(data);
       }
     } catch (e) {
       LoggerService.w('Failed to parse WebSocket message: $e', tag: 'WebSocketService');

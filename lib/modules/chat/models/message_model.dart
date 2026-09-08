@@ -30,8 +30,10 @@ class MessageModel {
     final readAt = json['read_at'];
     final isRead = json['is_read'] == true || (readAt != null && readAt.toString().isNotEmpty);
 
+    final rawId = json['id']?.toString() ?? json['message_id']?.toString() ?? '';
+
     return MessageModel(
-      id: json['id']?.toString() ?? '',
+      id: rawId,
       chatId: (json['chat_id'] is int ? json['chat_id'] : int.tryParse('${json['chat_id']}')) ?? 0,
       senderId: (json['sender_id'] is int ? json['sender_id'] : int.tryParse('${json['sender_id']}')) ?? 0,
       content: json['content']?.toString() ?? '',

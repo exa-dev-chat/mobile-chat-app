@@ -36,6 +36,7 @@ class CallController extends GetxController {
   Timer? _durationTimer;
   StreamSubscription? _signalingSub;
   Map<String, dynamic>? _pendingOfferSDP;
+  final _recordedCallIds = <String>{};
 
   Map<String, dynamic> get _rtcConfig {
     final rawStunUrl = AppConstants.stunUrl;
@@ -509,6 +510,12 @@ class CallController extends GetxController {
     required int duration,
     required int receiverId,
   }) async {
+    if (callId.isEmpty || _recordedCallIds.contains(callId)) {
+      LoggerService.w('Call log already recorded for callId: $callId', tag: 'CallController');
+      return;
+    }
+    _recordedCallIds.add(callId);
+
     try {
       final storageService = Get.find<StorageService>();
       final profile = storageService.userProfile;
