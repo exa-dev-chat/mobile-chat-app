@@ -49,11 +49,13 @@ class CallController extends GetxController {
     ];
 
     if (rawTurnUrl.isNotEmpty && turnUsername.isNotEmpty && turnCredential.isNotEmpty) {
-      final turnUrl = (rawTurnUrl.startsWith('turn:') || rawTurnUrl.startsWith('turns:'))
-          ? rawTurnUrl
-          : 'turn:$rawTurnUrl';
+      final cleanTurn = rawTurnUrl.replaceFirst('turn:', '').replaceFirst('turns:', '');
       iceServers.add({
-        'urls': turnUrl,
+        'urls': [
+          'turn:$cleanTurn?transport=udp',
+          'turn:$cleanTurn?transport=tcp',
+          'turn:$cleanTurn',
+        ],
         'username': turnUsername,
         'credential': turnCredential,
       });
@@ -330,7 +332,11 @@ class CallController extends GetxController {
 
   Future<void> _initLocalMedia(CallType callType) async {
     final mediaConstraints = {
-      'audio': true,
+      'audio': {
+        'echoCancellation': true,
+        'noiseSuppression': true,
+        'autoGainControl': true,
+      },
       'video': callType == CallType.video
           ? {
               'facingMode': 'user',
@@ -348,6 +354,10 @@ class CallController extends GetxController {
 
   Future<void> _createPeerConnection(int targetUserId, String callId) async {
     _peerConnection = await createPeerConnection(_rtcConfig);
+
+    // Default to loudspeaker so caller and receiver hear voice clearly
+    Helper.setSpeakerphoneOn(true);
+    isSpeakerOn.value = true;
 
     // Add local tracks
     _localStream?.getTracks().forEach((track) {

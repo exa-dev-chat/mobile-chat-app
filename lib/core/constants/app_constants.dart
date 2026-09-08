@@ -77,14 +77,14 @@ class AppConstants {
       dotenv.env['STUN_URL'] ??
       const String.fromEnvironment(
         'STUN_URL',
-        defaultValue: 'stun:coturn.eka-dev.cloud:19302',
+        defaultValue: 'stun:coturn.eka-dev.cloud:3478',
       );
 
   static String get turnUrl =>
       dotenv.env['TURN_URL'] ??
       const String.fromEnvironment(
         'TURN_URL',
-        defaultValue: 'turn:coturn.eka-dev.cloud:19302',
+        defaultValue: 'turn:coturn.eka-dev.cloud:3478',
       );
 
   static String get turnUsername =>
