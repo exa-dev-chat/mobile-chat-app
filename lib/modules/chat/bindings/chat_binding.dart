@@ -2,6 +2,7 @@ import 'package:get/get.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/services/storage_service.dart';
 import '../../../core/services/upload_service.dart';
+import '../../../core/services/voice_player_service.dart';
 import '../../../core/services/voice_recorder_service.dart';
 import '../../../core/services/websocket_service.dart';
 import '../../auth/controllers/auth_controller.dart';
@@ -54,6 +55,12 @@ class ChatBinding extends Bindings {
     if (!Get.isRegistered<VoiceRecorderService>()) {
       Get.lazyPut<VoiceRecorderService>(
         () => VoiceRecorderService(),
+        fenix: true,
+      );
+    }
+    if (!Get.isRegistered<VoicePlayerService>()) {
+      Get.lazyPut<VoicePlayerService>(
+        () => VoicePlayerService(),
         fenix: true,
       );
     }

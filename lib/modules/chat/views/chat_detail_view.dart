@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
+import '../../../core/services/voice_player_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../call/models/call_session_model.dart';
 import '../controllers/chat_controller.dart';
@@ -50,6 +51,9 @@ class ChatDetailView extends GetView<ChatController> {
             FocusManager.instance.primaryFocus?.unfocus();
             if (controller.voiceRecorderService.isRecording.value) {
               controller.cancelVoiceRecording();
+            }
+            if (Get.isRegistered<VoicePlayerService>()) {
+              Get.find<VoicePlayerService>().stop();
             }
           }
         },
