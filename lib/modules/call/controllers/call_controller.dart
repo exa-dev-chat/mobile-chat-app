@@ -6,10 +6,14 @@ import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:get/get.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../../core/constants/api_endpoints.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/network/api_client.dart';
 import '../../../core/services/logger_service.dart';
 import '../../../core/services/snackbar_service.dart';
+import '../../../core/services/storage_service.dart';
 import '../../../core/services/websocket_service.dart';
+import '../models/call_log_model.dart';
 import '../models/call_session_model.dart';
 import '../views/call_view.dart';
 import '../views/incoming_call_dialog.dart';
@@ -161,19 +165,19 @@ class CallController extends GetxController {
         SnackbarService.info(
           '${currentCall.value?.targetUserName ?? "Pengguna"} menolak panggilan.',
         );
-        _endCallCleanup();
+        _endCallCleanup(status: 'declined');
         break;
 
       case 'call:hangup':
         SnackbarService.info('Panggilan telah berakhir.');
-        _endCallCleanup();
+        _endCallCleanup(status: 'completed');
         break;
 
       case 'call:unavailable':
         SnackbarService.warning(
           'Pengguna sedang tidak aktif atau tidak dapat dihubungi.',
         );
-        _endCallCleanup();
+        _endCallCleanup(status: 'missed');
         break;
 
       case 'call:already_answered':
@@ -230,6 +234,7 @@ class CallController extends GetxController {
     required int targetUserId,
     required String targetUserName,
     required CallType callType,
+    int? chatId,
   }) async {
     final callId = const Uuid().v4();
 
@@ -239,6 +244,7 @@ class CallController extends GetxController {
       targetUserName: targetUserName,
       callType: callType,
       isCaller: true,
+      chatId: chatId,
       state: CallState.calling,
     );
 
@@ -315,7 +321,7 @@ class CallController extends GetxController {
       );
     }
     Get.back(); // Dismiss dialog
-    _endCallCleanup(notifyRemote: false);
+    _endCallCleanup(notifyRemote: false, status: 'declined');
   }
 
   void hangup() {
@@ -327,7 +333,10 @@ class CallController extends GetxController {
         data: {'call_id': call.callId},
       );
     }
-    _endCallCleanup(notifyRemote: false);
+    final status = (currentCall.value?.duration ?? 0) > 0
+        ? 'completed'
+        : (currentCall.value?.isCaller ?? false ? 'canceled' : 'declined');
+    _endCallCleanup(notifyRemote: false, status: status);
   }
 
   Future<void> _initLocalMedia(CallType callType) async {
@@ -445,9 +454,23 @@ class CallController extends GetxController {
     });
   }
 
-  void _endCallCleanup({bool notifyRemote = true}) {
+  void _endCallCleanup({bool notifyRemote = true, String status = 'completed'}) {
     _durationTimer?.cancel();
     _durationTimer = null;
+
+    final call = currentCall.value;
+    if (call != null && call.isCaller && call.chatId != null) {
+      final int duration = call.duration;
+      final effectiveStatus = duration > 0 ? 'completed' : status;
+      _recordCallLog(
+        chatId: call.chatId!,
+        callId: call.callId,
+        callType: call.callType == CallType.video ? 'video' : 'audio',
+        status: effectiveStatus,
+        duration: duration,
+        receiverId: call.targetUserId,
+      );
+    }
 
     try {
       _localStream?.getTracks().forEach((t) => t.stop());
@@ -475,6 +498,45 @@ class CallController extends GetxController {
       try {
         Get.back();
       } catch (_) {}
+    }
+  }
+
+  Future<void> _recordCallLog({
+    required int chatId,
+    required String callId,
+    required String callType,
+    required String status,
+    required int duration,
+    required int receiverId,
+  }) async {
+    try {
+      final storageService = Get.find<StorageService>();
+      final profile = storageService.userProfile;
+      final callerId = (profile?['id'] as int?) ?? 0;
+      final callerName = (profile?['name'] as String?) ?? 'User';
+
+      final payload = formatCallLogPayload(
+        callId: callId,
+        callType: callType,
+        status: status,
+        duration: duration,
+        callerId: callerId,
+        callerName: callerName,
+        receiverId: receiverId,
+      );
+
+      final apiClient = Get.find<ApiClient>();
+      await apiClient.post(
+        ApiEndpoints.messages,
+        data: {
+          'chat_id': chatId,
+          'content': payload,
+          'message_type': 'text',
+        },
+      );
+      LoggerService.i('Call log recorded: $status', tag: 'CallController');
+    } catch (e) {
+      LoggerService.w('Failed to record call log: $e', tag: 'CallController');
     }
   }
 

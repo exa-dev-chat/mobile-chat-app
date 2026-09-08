@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../call/models/call_log_model.dart';
 import '../../models/chat_room_model.dart';
 
 class ChatItemTile extends StatelessWidget {
@@ -160,6 +161,9 @@ class ChatItemTile extends StatelessWidget {
 
   String _formatPreview(String? preview) {
     if (preview == null || preview.isEmpty) return 'Belum ada pesan';
+    if (isCallLog(preview)) {
+      return getCallLogPreviewText(preview);
+    }
     if (preview.endsWith('.m4a') || preview.endsWith('.mp3') || preview.contains('/audio')) {
       return '🎙️ Pesan Suara';
     }

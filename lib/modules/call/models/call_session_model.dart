@@ -7,6 +7,7 @@ class CallSessionModel {
   final String targetUserName;
   final CallType callType;
   final bool isCaller;
+  final int? chatId;
   CallState state;
   int duration; // in seconds
 
@@ -16,6 +17,7 @@ class CallSessionModel {
     required this.targetUserName,
     required this.callType,
     required this.isCaller,
+    this.chatId,
     this.state = CallState.idle,
     this.duration = 0,
   });

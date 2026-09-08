@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../call/models/call_log_model.dart';
 import '../../models/message_model.dart';
+import 'call_log_bubble.dart';
 import 'voice_note_player.dart';
 
 class MessageBubble extends StatelessWidget {
@@ -15,6 +17,16 @@ class MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (isCallLog(message.content)) {
+      return Align(
+        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: CallLogBubble(
+          message: message,
+          isMe: isMe,
+        ),
+      );
+    }
+
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(

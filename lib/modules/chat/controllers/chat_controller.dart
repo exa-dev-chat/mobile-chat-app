@@ -313,6 +313,7 @@ class ChatController extends GetxController {
       targetUserId: targetId,
       targetUserName: targetName,
       callType: type,
+      chatId: chat.id,
     );
   }
 
