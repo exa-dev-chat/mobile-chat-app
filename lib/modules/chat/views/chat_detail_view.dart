@@ -6,7 +6,7 @@ import '../../call/models/call_session_model.dart';
 import '../controllers/chat_controller.dart';
 import 'widgets/message_bubble.dart';
 
-class ChatDetailView extends StatefulWidget {
+class ChatDetailView extends GetView<ChatController> {
   final bool isEmbedded;
 
   const ChatDetailView({
@@ -15,62 +15,24 @@ class ChatDetailView extends StatefulWidget {
   });
 
   @override
-  State<ChatDetailView> createState() => _ChatDetailViewState();
-}
-
-class _ChatDetailViewState extends State<ChatDetailView> {
-  late final TextEditingController _textController;
-  final _hasInputText = false.obs;
-  late final ChatController controller;
-  Worker? _chatWorker;
-
-  @override
-  void initState() {
-    super.initState();
-    controller = Get.find<ChatController>();
-    _textController = TextEditingController();
-    _textController.addListener(_onTextChanged);
-
-    // Clear input whenever active chat changes in split-screen mode
-    _chatWorker = ever(controller.activeChat, (_) {
-      _textController.clear();
-      _hasInputText.value = false;
-    });
-  }
-
-  void _onTextChanged() {
-    final has = _textController.text.trim().isNotEmpty;
-    if (_hasInputText.value != has) {
-      _hasInputText.value = has;
-    }
-  }
-
-  @override
-  void dispose() {
-    _chatWorker?.dispose();
-    _textController.removeListener(_onTextChanged);
-    _textController.dispose();
-    super.dispose();
-  }
-
-  void _handleSend() {
-    final text = _textController.text.trim();
-    if (text.isNotEmpty) {
-      controller.sendMessage(customContent: text);
-      _textController.clear();
-      _hasInputText.value = false;
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Obx(() {
       final chat = controller.activeChat.value;
 
       if (chat == null) {
-        return const Scaffold(
+        return Scaffold(
           backgroundColor: AppColors.background,
-          body: Center(
+          appBar: isEmbedded
+              ? null
+              : AppBar(
+                  backgroundColor: AppColors.surface,
+                  elevation: 0,
+                  leading: IconButton(
+                    icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
+                    onPressed: () => Get.back(),
+                  ),
+                ),
+          body: const Center(
             child: Text(
               'Pilih obrolan untuk memulai percakapan',
               style: TextStyle(color: AppColors.textMuted, fontSize: 15),
@@ -96,7 +58,7 @@ class _ChatDetailViewState extends State<ChatDetailView> {
           appBar: AppBar(
             backgroundColor: AppColors.surface,
             elevation: 0,
-            leading: widget.isEmbedded
+            leading: isEmbedded
                 ? null
                 : IconButton(
                     icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
@@ -332,10 +294,10 @@ class _ChatDetailViewState extends State<ChatDetailView> {
         // Text Field
         Expanded(
           child: TextField(
-            controller: _textController,
+            controller: controller.messageInputController,
             textInputAction: TextInputAction.send,
             onChanged: (_) => controller.notifyTyping(),
-            onSubmitted: (_) => _handleSend(),
+            onSubmitted: (_) => controller.sendMessage(),
             style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
             decoration: InputDecoration(
               hintText: 'Tulis pesan...',
@@ -362,7 +324,7 @@ class _ChatDetailViewState extends State<ChatDetailView> {
 
         // Mic or Send Action Button
         Obx(() {
-          final hasText = _hasInputText.value;
+          final hasText = controller.hasInputText.value;
 
           if (hasText) {
             return Container(
@@ -381,7 +343,7 @@ class _ChatDetailViewState extends State<ChatDetailView> {
                         ),
                       )
                     : const Icon(Icons.send_rounded, color: Colors.white, size: 20),
-                onPressed: controller.isSendingMessage.value ? null : _handleSend,
+                onPressed: controller.isSendingMessage.value ? null : () => controller.sendMessage(),
               ),
             );
           }

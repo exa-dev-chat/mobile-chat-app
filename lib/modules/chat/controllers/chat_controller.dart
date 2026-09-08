@@ -50,6 +50,7 @@ class ChatController extends GetxController {
   final messageInputController = TextEditingController();
   final searchController = TextEditingController();
   final messageScrollController = ScrollController();
+  final hasInputText = false.obs;
 
   final _imagePicker = ImagePicker();
   Timer? _typingResetTimer;
@@ -68,8 +69,16 @@ class ChatController extends GetxController {
   @override
   void onInit() {
     super.onInit();
+    messageInputController.addListener(_onInputTextChanged);
     loadChats();
     _initWebSocket();
+  }
+
+  void _onInputTextChanged() {
+    final has = messageInputController.text.trim().isNotEmpty;
+    if (hasInputText.value != has) {
+      hasInputText.value = has;
+    }
   }
 
   void _initWebSocket() {
@@ -148,6 +157,8 @@ class ChatController extends GetxController {
     }
 
     activeChat.value = chat;
+    messageInputController.clear();
+    hasInputText.value = false;
     wsService.joinChat(chat.id);
     loadMessages(chat.id);
 
@@ -309,6 +320,7 @@ class ChatController extends GetxController {
     _typingSub?.cancel();
     _presenceSub?.cancel();
     _typingResetTimer?.cancel();
+    messageInputController.removeListener(_onInputTextChanged);
     messageInputController.dispose();
     searchController.dispose();
     messageScrollController.dispose();
