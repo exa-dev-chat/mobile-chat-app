@@ -245,25 +245,12 @@ class ChatListView extends GetView<ChatController> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Container(
+          SizedBox(
             width: 84,
             height: 84,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(24),
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.primary.withValues(alpha: 0.25),
-                  blurRadius: 24,
-                  offset: const Offset(0, 8),
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(24),
-              child: Image.asset(
-                AppConstants.appIcon,
-                fit: BoxFit.cover,
-              ),
+            child: Image.asset(
+              AppConstants.appIcon,
+              fit: BoxFit.contain,
             ),
           ),
           const SizedBox(height: 20),

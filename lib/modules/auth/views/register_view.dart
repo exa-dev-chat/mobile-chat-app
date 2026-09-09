@@ -29,25 +29,12 @@ class RegisterView extends GetView<AuthController> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Center(
-                  child: Container(
-                    width: 68,
-                    height: 68,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppColors.primary.withValues(alpha: 0.4),
-                          blurRadius: 22,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(20),
-                      child: Image.asset(
-                        AppConstants.appIcon,
-                        fit: BoxFit.cover,
-                      ),
+                  child: SizedBox(
+                    width: 72,
+                    height: 72,
+                    child: Image.asset(
+                      AppConstants.appIcon,
+                      fit: BoxFit.contain,
                     ),
                   ),
                 ),

@@ -57,25 +57,12 @@ class SplashView extends GetView<SplashController> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Container(
-                  width: 96,
-                  height: 96,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(26),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.primary.withValues(alpha: 0.5),
-                        blurRadius: 32,
-                        offset: const Offset(0, 12),
-                      ),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(26),
-                    child: Image.asset(
-                      AppConstants.appIcon,
-                      fit: BoxFit.cover,
-                    ),
+                SizedBox(
+                  width: 104,
+                  height: 104,
+                  child: Image.asset(
+                    AppConstants.appIcon,
+                    fit: BoxFit.contain,
                   ),
                 ),
                 const SizedBox(height: 24),

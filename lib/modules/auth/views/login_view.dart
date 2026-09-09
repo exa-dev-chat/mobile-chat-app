@@ -63,25 +63,24 @@ class LoginView extends GetView<AuthController> {
                         width: 72,
                         height: 72,
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(20),
+                          color: AppColors.surface,
+                          shape: BoxShape.circle,
                           border: Border.all(
                             color: AppColors.background,
                             width: 3.5,
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: AppColors.primary.withValues(alpha: 0.5),
-                              blurRadius: 24,
-                              offset: const Offset(0, 8),
+                              color: AppColors.primary.withValues(alpha: 0.4),
+                              blurRadius: 20,
+                              offset: const Offset(0, 6),
                             ),
                           ],
                         ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(17),
-                          child: Image.asset(
-                            AppConstants.appIcon,
-                            fit: BoxFit.cover,
-                          ),
+                        padding: const EdgeInsets.all(8),
+                        child: Image.asset(
+                          AppConstants.appIcon,
+                          fit: BoxFit.contain,
                         ),
                       ),
                     ),

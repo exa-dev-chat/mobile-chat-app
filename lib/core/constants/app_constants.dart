@@ -9,7 +9,7 @@ class AppConstants {
   static const String appVersion = '1.0.0';
 
   // Assets
-  static const String appIcon = 'assets/images/app_icon.jpg';
+  static const String appIcon = 'assets/images/app_icon.png';
   static const String loginBanner = 'assets/images/login.png';
 
   // Base API URL
