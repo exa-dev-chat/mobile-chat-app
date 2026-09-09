@@ -310,11 +310,14 @@ class ChatController extends GetxController {
     final path = result.firstOrNull?.path;
     if (path == null) return;
 
+    final ext = path.split('.').last.toLowerCase();
+    final isImage = ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'].contains(ext);
+
     try {
       isUploadingMedia.value = true;
       final fileUrl = await uploadService.uploadFile(filePath: path);
       if (fileUrl != null) {
-        await sendMessage(type: 'file', customContent: fileUrl);
+        await sendMessage(type: isImage ? 'image' : 'file', customContent: fileUrl);
       } else {
         SnackbarService.error('Gagal mengunggah berkas.');
       }
