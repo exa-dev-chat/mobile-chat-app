@@ -1,0 +1,74 @@
+name: Deploy Android
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "Build Output (appbundle, apk, or both)"
+        required: false
+        default: "both"
+        type: choice
+        options:
+          - appbundle
+          - apk
+          - both
+      upload_to_play_store:
+        description: "Deploy to Google Play Console"
+        required: false
+        default: true
+        type: boolean
+      track:
+        description: "Google Play Track"
+        required: false
+        default: "internal"
+        type: choice
+        options:
+          - internal
+          - alpha
+          - beta
+          - production
+
+permissions:
+  contents: write
+  packages: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    uses: exa31/github-workflows/.github/workflows/flutter-android.yml@v1.0.0
+    with:
+      app_name: mobile-chat-app
+      flutter_version: "3.x"
+      java_version: "17"
+      build_type: ${{ inputs.build_type || 'both' }}
+      package_name: "cloud.eka_dev.chat_app"
+      enable_semantic_release: false
+      update_pubspec: false
+      upload_to_play_store: ${{ github.event_name == 'workflow_run' || inputs.upload_to_play_store == true }}
+      track: ${{ inputs.track || 'internal' }}
+      env_content: |
+        API_BASE_URL=${{ vars.API_BASE_URL }}
+        WS_BASE_URL=${{ vars.WS_BASE_URL }}
+        STUN_URL=${{ vars.STUN_URL }}
+        TURN_URL=${{ vars.TURN_URL }}
+        TURN_USERNAME=${{ vars.TURN_USERNAME }}
+        TURN_CREDENTIAL=${{ secrets.TURN_CREDENTIAL }}
+        GOOGLE_SERVER_CLIENT_ID=${{ vars.GOOGLE_SERVER_CLIENT_ID }}
+        GOOGLE_IOS_CLIENT_ID=${{ vars.GOOGLE_IOS_CLIENT_ID }}
+        ENABLE_APPLE_SIGN_IN=${{ vars.ENABLE_APPLE_SIGN_IN }}
+        LOKI_URL=${{ vars.LOKI_URL }}
+    secrets:
+      ENV_FILE: ${{ secrets.ENV_FILE }}
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      PLAY_STORE_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
