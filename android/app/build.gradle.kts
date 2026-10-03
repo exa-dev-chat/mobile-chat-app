@@ -1,7 +1,16 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
 android {
@@ -13,6 +22,17 @@ android {
         isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    signingConfigs {
+        create("release") {
+            keyAlias = keystoreProperties.getProperty("keyAlias")
+            keyPassword = keystoreProperties.getProperty("keyPassword")
+            storePassword = keystoreProperties.getProperty("storePassword")
+            val keystorePath = keystoreProperties.getProperty("storeFile") ?: "upload-keystore.jks"
+            val resolvedStoreFile = if (file(keystorePath).exists()) file(keystorePath) else rootProject.file(keystorePath)
+            storeFile = resolvedStoreFile
+        }
     }
 
     defaultConfig {
@@ -33,9 +53,12 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            val keystorePath = keystoreProperties.getProperty("storeFile") ?: "upload-keystore.jks"
+            val resolvedStoreFile = if (file(keystorePath).exists()) file(keystorePath) else rootProject.file(keystorePath)
+            val hasReleaseKey = keystorePropertiesFile.exists() &&
+                keystoreProperties.getProperty("keyAlias") != null &&
+                resolvedStoreFile.exists()
+            signingConfig = if (hasReleaseKey) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
         }
     }
 
