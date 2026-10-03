@@ -4,6 +4,7 @@ import '../../../core/network/api_client.dart';
 import '../../../core/services/logger_service.dart';
 import '../../../core/services/storage_service.dart';
 import '../../../routes/app_routes.dart';
+import '../../auth/models/user_model.dart';
 
 class SplashController extends GetxController {
   final StorageService _storageService = Get.find<StorageService>();
@@ -34,7 +35,8 @@ class SplashController extends GetxController {
           : responseData;
 
       if (data is Map) {
-        await _storageService.saveUserProfile(Map<String, dynamic>.from(data));
+        final user = UserModel.fromJson(Map<String, dynamic>.from(data));
+        await _storageService.saveUserProfile(user.toJson());
       }
       LoggerService.i('Splash /me verification succeeded, proceeding to chats', tag: 'SplashController');
       Get.offAllNamed(Routes.chats);

@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../../../core/constants/app_constants.dart';
@@ -99,13 +100,38 @@ class RegisterView extends GetView<AuthController> {
                       const SizedBox(height: 18),
 
                       // Email Field
-                      const Text(
-                        'Email',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: AppColors.textSecondary,
-                        ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Email',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                          Obx(
+                            () => TextButton(
+                              onPressed: controller.isRegisterOtpSending.value ? null : controller.sendRegisterOtp,
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                minimumSize: const Size(50, 20),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: Text(
+                                controller.isRegisterOtpSending.value
+                                    ? 'Mengirim...'
+                                    : (controller.isRegisterOtpSent.value ? 'Kirim Ulang OTP' : 'Kirim Kode OTP'),
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.primaryLight,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 8),
                       TextField(
@@ -118,6 +144,39 @@ class RegisterView extends GetView<AuthController> {
                         ),
                       ),
                       const SizedBox(height: 18),
+
+                      // 6-Digit OTP Field (shown when sent or active)
+                      Obx(() {
+                        if (!controller.isRegisterOtpSent.value) {
+                          return const SizedBox.shrink();
+                        }
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Kode Verifikasi OTP (6-Digit)',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: AppColors.primaryLight,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: controller.registerOtpController,
+                              keyboardType: TextInputType.number,
+                              maxLength: 6,
+                              textInputAction: TextInputAction.next,
+                              decoration: const InputDecoration(
+                                hintText: '123456',
+                                counterText: '',
+                                prefixIcon: Icon(Icons.mark_email_read_outlined, color: AppColors.primaryLight),
+                              ),
+                            ),
+                            const SizedBox(height: 18),
+                          ],
+                        );
+                      }),
 
                       // Password Field
                       const Text(
@@ -135,7 +194,7 @@ class RegisterView extends GetView<AuthController> {
                           obscureText: !controller.isPasswordVisible.value,
                           textInputAction: TextInputAction.next,
                           decoration: InputDecoration(
-                            hintText: 'Minimal 6 karakter',
+                            hintText: 'Minimal 8 karakter',
                             prefixIcon: const Icon(Icons.lock_outline),
                             suffixIcon: IconButton(
                               icon: Icon(
@@ -283,6 +342,53 @@ class RegisterView extends GetView<AuthController> {
                                 ),
                         ),
                       ),
+                      if (AppConstants.isAppleSignInEnabled && (Platform.isIOS || Platform.isMacOS)) ...[
+                        const SizedBox(height: 12),
+                        Obx(
+                          () => OutlinedButton(
+                            onPressed: controller.isAppleLoading.value
+                                ? null
+                                : controller.loginWithApple,
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: AppColors.border, width: 1.2),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              backgroundColor: Colors.white,
+                              foregroundColor: Colors.black,
+                            ),
+                            child: controller.isAppleLoading.value
+                                ? const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(Colors.black),
+                                    ),
+                                  )
+                                : const Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.apple,
+                                        color: Colors.black,
+                                        size: 22,
+                                      ),
+                                      SizedBox(width: 10),
+                                      Text(
+                                        'Lanjut dengan Apple',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.black,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),

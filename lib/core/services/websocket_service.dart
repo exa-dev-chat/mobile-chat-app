@@ -93,7 +93,7 @@ class WebSocketService extends GetxService {
         _typingController.add(data);
       } else if (type.startsWith('call:')) {
         _callSignalingController.add(data);
-      } else if (type == 'new_message' || type == 'message') {
+      } else if (type == 'new_message' || type == 'message' || type == 'read_messages') {
         _messageController.add(data);
       } else if (type == 'new_message_notification' ||
           type == 'message_updated_notification' ||

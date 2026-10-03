@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:logger/logger.dart';
+import 'crash_reporter_service.dart';
 
 class LoggerService {
   LoggerService._();
@@ -34,12 +35,34 @@ class LoggerService {
   static void w(String message, {String? tag, dynamic error, StackTrace? stackTrace}) {
     final formattedMessage = tag != null ? '[$tag] $message' : message;
     _logger.w(formattedMessage, error: error, stackTrace: stackTrace);
+    if (error != null) {
+      CrashReporterService.instance.recordError(
+        error,
+        stackTrace,
+        reason: message,
+        fatal: false,
+        tag: tag ?? 'WARN',
+      );
+    } else {
+      CrashReporterService.instance.recordLog(
+        message,
+        level: 'WARN',
+        tag: tag ?? 'APP',
+      );
+    }
   }
 
   /// Error log for exceptions and critical failures
   static void e(String message, {String? tag, dynamic error, StackTrace? stackTrace}) {
     final formattedMessage = tag != null ? '[$tag] $message' : message;
     _logger.e(formattedMessage, error: error, stackTrace: stackTrace);
+    CrashReporterService.instance.recordError(
+      error ?? message,
+      stackTrace,
+      reason: message,
+      fatal: false,
+      tag: tag ?? 'ERROR',
+    );
   }
 
   /// Dedicated network log for API requests and responses
@@ -52,6 +75,17 @@ class LoggerService {
     Duration? duration,
     dynamic error,
   }) {
+    if (statusCode != null && statusCode >= 400 || error != null) {
+      CrashReporterService.instance.recordHttpError(
+        method: method,
+        path: url,
+        statusCode: statusCode,
+        errorMessage: error?.toString(),
+        responseBody: response,
+        duration: duration,
+      );
+    }
+
     if (kReleaseMode) return;
     final status = statusCode != null ? '[$statusCode]' : '[ERROR]';
     final latency = duration != null ? '(${duration.inMilliseconds}ms)' : '';

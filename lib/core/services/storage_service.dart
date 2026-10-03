@@ -42,6 +42,16 @@ class StorageService extends GetxService {
     return null;
   }
 
+  int get currentUserId {
+    final profile = userProfile;
+    if (profile != null) {
+      final rawId = profile['id'] ?? profile['user_id'];
+      if (rawId is int) return rawId;
+      if (rawId != null) return int.tryParse('$rawId') ?? 0;
+    }
+    return 0;
+  }
+
   Future<void> saveUserProfile(Map<String, dynamic> user) async {
     await _box.write(AppConstants.storageKeyUser, user);
   }
@@ -59,6 +69,11 @@ class StorageService extends GetxService {
     final token = accessToken;
     return token != null && token.isNotEmpty;
   }
+
+  // Apple ID
+  String? get appleId => _box.read<String>('apple_id');
+  Future<void> saveAppleId(String id) async => await _box.write('apple_id', id);
+  Future<void> clearAppleId() async => await _box.remove('apple_id');
 
   // FCM Token
   String? get fcmToken => _box.read<String>('fcm_token');

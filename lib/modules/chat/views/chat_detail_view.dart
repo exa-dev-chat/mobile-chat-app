@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../../core/services/voice_player_service.dart';
+import '../../../core/utils/app_haptics.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../call/models/call_session_model.dart';
 import '../controllers/chat_controller.dart';
@@ -122,8 +123,11 @@ class ChatDetailView extends GetView<ChatController> {
                       }
                       final isOnline = chat.userId != null &&
                           controller.onlineUsers.contains(chat.userId);
+                      final statusText = controller.getChatStatusText(chat);
                       return Text(
-                        isOnline ? 'Online' : 'Offline',
+                        statusText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 12,
                           color: isOnline
@@ -217,11 +221,88 @@ class ChatDetailView extends GetView<ChatController> {
                   itemBuilder: (context, index) {
                     final msg = messages[index];
                     final isMe = msg.senderId == controller.currentUserId;
-                    return MessageBubble(message: msg, isMe: isMe);
+                    final isGroup = controller.activeChat.value?.type == 'group';
+                    return MessageBubble(
+                      key: ValueKey('msg_${msg.id.isNotEmpty ? msg.id : "idx_$index"}_${msg.createdAt}'),
+                      message: msg,
+                      isMe: isMe,
+                      isGroup: isGroup,
+                      reactions: controller.messageReactions[msg.id] ?? msg.reactions,
+                      onReply: () => controller.setReply(msg),
+                      onReact: (emoji) => controller.toggleReaction(msg.id, emoji),
+                      onDelete: isMe ? () => controller.deleteMessage(msg) : null,
+                    );
                   },
                 );
               }),
             ),
+
+            // Floating Reply Preview Banner
+            Obx(() {
+              final reply = controller.replyingMessage.value;
+              if (reply == null) return const SizedBox.shrink();
+
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceVariant.withValues(alpha: 0.95),
+                  border: const Border(
+                    top: BorderSide(color: AppColors.border, width: 1),
+                    bottom: BorderSide(color: AppColors.border, width: 1),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 3.5,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.reply_rounded, size: 14, color: AppColors.accent),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Membalas ke ${reply.senderName ?? (reply.senderId == controller.currentUserId ? "Diri Sendiri" : "Pesan")}',
+                                style: const TextStyle(
+                                  color: AppColors.accent,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            reply.content.startsWith('http') ? '[Media / Berkas]' : reply.content,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, size: 20, color: AppColors.textMuted),
+                      tooltip: 'Batal Balas',
+                      onPressed: () => controller.clearReply(),
+                    ),
+                  ],
+                ),
+              );
+            }),
 
             // Message Input Bar
             Container(
@@ -306,7 +387,10 @@ class ChatDetailView extends GetView<ChatController> {
         // Media Attachment Button
         IconButton(
           icon: const Icon(Icons.add_circle_outline_rounded, color: AppColors.textSecondary, size: 24),
-          onPressed: () => _showAttachmentBottomSheet(context),
+          onPressed: () {
+            AppHaptics.light();
+            _showAttachmentBottomSheet(context);
+          },
         ),
 
         // Text Field

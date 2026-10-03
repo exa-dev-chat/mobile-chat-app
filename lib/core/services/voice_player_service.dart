@@ -11,6 +11,7 @@ class VoicePlayerService extends GetxService {
   final isPlaying = false.obs;
   final duration = Duration.zero.obs;
   final position = Duration.zero.obs;
+  final playbackRate = 1.0.obs;
 
   StreamSubscription? _playerStateSub;
   StreamSubscription? _durationSub;
@@ -49,6 +50,7 @@ class VoicePlayerService extends GetxService {
           if (position.value >= duration.value && duration.value > Duration.zero) {
             await _player.seek(Duration.zero);
           }
+          await _player.setPlaybackRate(playbackRate.value);
           await _player.resume();
         }
       } else {
@@ -56,11 +58,28 @@ class VoicePlayerService extends GetxService {
         activeUrl.value = url;
         position.value = Duration.zero;
         duration.value = Duration.zero;
+        await _player.setPlaybackRate(playbackRate.value);
         await _player.play(UrlSource(url));
       }
     } catch (e) {
-      LoggerService.e('Failed to toggle audio playback: $e', tag: 'VoicePlayerService');
+      LoggerService.e('Failed to toggle audio playback: ', tag: 'VoicePlayerService');
       isPlaying.value = false;
+    }
+  }
+
+  Future<void> cyclePlaybackRate() async {
+    if (playbackRate.value == 1.0) {
+      playbackRate.value = 1.5;
+    } else if (playbackRate.value == 1.5) {
+      playbackRate.value = 2.0;
+    } else {
+      playbackRate.value = 1.0;
+    }
+
+    try {
+      await _player.setPlaybackRate(playbackRate.value);
+    } catch (e) {
+      LoggerService.w('Could not set playback rate: ', tag: 'VoicePlayerService');
     }
   }
 

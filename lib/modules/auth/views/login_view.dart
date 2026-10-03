@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../../../core/constants/app_constants.dart';
@@ -302,6 +303,53 @@ class LoginView extends GetView<AuthController> {
                                 ),
                         ),
                       ),
+                      if (AppConstants.isAppleSignInEnabled && (Platform.isIOS || Platform.isMacOS)) ...[
+                        const SizedBox(height: 12),
+                        Obx(
+                          () => OutlinedButton(
+                            onPressed: controller.isAppleLoading.value
+                                ? null
+                                : controller.loginWithApple,
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: AppColors.border, width: 1.2),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              backgroundColor: Colors.white,
+                              foregroundColor: Colors.black,
+                            ),
+                            child: controller.isAppleLoading.value
+                                ? const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(Colors.black),
+                                    ),
+                                  )
+                                : const Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.apple,
+                                        color: Colors.black,
+                                        size: 22,
+                                      ),
+                                      SizedBox(width: 10),
+                                      Text(
+                                        'Masuk dengan Apple',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.black,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),

@@ -1,8 +1,11 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:get/get.dart';
 import 'core/constants/app_constants.dart';
 import 'core/network/api_client.dart';
+import 'core/services/crash_reporter_service.dart';
 import 'core/services/fcm_service.dart';
 import 'core/services/logger_service.dart';
 import 'core/services/storage_service.dart';
@@ -12,6 +15,12 @@ import 'routes/app_pages.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Lock orientation to vertical (portrait) only
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+
   // Load .env configuration
   try {
     await dotenv.load(fileName: '.env');
@@ -19,6 +28,30 @@ void main() async {
   } catch (e) {
     LoggerService.w('.env could not be loaded, using defaults: $e', tag: 'Bootstrap');
   }
+
+  // Initialize Crash Reporter & Offline Observability Service (Loki)
+  try {
+    await CrashReporterService.instance.initialize();
+  } catch (e) {
+    LoggerService.w('CrashReporterService initialization warning: $e', tag: 'Bootstrap');
+  }
+
+  // Global Flutter UI Framework Error Handler
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+    CrashReporterService.instance.recordFlutterFatalError(details);
+  };
+
+  // Global Asynchronous Unhandled Error Handler
+  PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
+    CrashReporterService.instance.recordError(
+      error,
+      stack,
+      fatal: true,
+      reason: 'PlatformDispatcher Unhandled Async Error',
+    );
+    return true;
+  };
 
   LoggerService.i('Initializing ChatApp core services...', tag: 'Bootstrap');
 

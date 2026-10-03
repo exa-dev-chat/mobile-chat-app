@@ -7,7 +7,9 @@ import '../../../routes/app_routes.dart';
 import '../../auth/controllers/auth_controller.dart';
 import '../controllers/chat_controller.dart';
 import 'chat_detail_view.dart';
+import '../../../core/utils/app_haptics.dart';
 import 'widgets/chat_item_tile.dart';
+import 'widgets/online_stories_bar.dart';
 
 class ChatListView extends GetView<ChatController> {
   const ChatListView({super.key});
@@ -178,7 +180,20 @@ class ChatListView extends GetView<ChatController> {
           ),
         ),
 
-        const SizedBox(height: 6),
+        // Active Online Contacts Stories Strip (Mobile Exclusive)
+        Obx(() {
+          final user = authController?.currentUser.value;
+          return OnlineStoriesBar(
+            chats: controller.chats,
+            onlineUserIds: controller.onlineUsers,
+            myAvatarUrl: user?.avatarUrl,
+            myName: user?.name ?? 'Saya',
+            onChatSelected: (chat) => controller.selectChat(chat, isWideScreen: isWide),
+            onMyStatusTap: () => Get.toNamed(Routes.profile),
+          );
+        }),
+
+        const SizedBox(height: 4),
 
         // Chat List
         Expanded(
@@ -225,11 +240,59 @@ class ChatListView extends GetView<ChatController> {
                   final chat = controller.chats[index];
                   final isSelected = isWide && controller.activeChat.value?.id == chat.id;
 
-                  return ChatItemTile(
-                    chat: chat,
-                    isSelected: isSelected,
-                    isOnline: chat.userId != null && controller.onlineUsers.contains(chat.userId),
-                    onTap: () => controller.selectChat(chat, isWideScreen: isWide),
+                  return Dismissible(
+                    key: ValueKey('chat_tile_${chat.id}'),
+                    direction: DismissDirection.endToStart,
+                    confirmDismiss: (direction) async {
+                      AppHaptics.heavy();
+                      final confirm = await Get.dialog<bool>(
+                        AlertDialog(
+                          backgroundColor: AppColors.surface,
+                          title: const Text('Hapus Obrolan', style: TextStyle(color: AppColors.textPrimary)),
+                          content: Text(
+                            'Apakah Anda yakin ingin menghapus obrolan dengan "${chat.name ?? "kontak"}"?',
+                            style: const TextStyle(color: AppColors.textSecondary),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Get.back(result: false),
+                              child: const Text('Batal', style: TextStyle(color: AppColors.textMuted)),
+                            ),
+                            FilledButton(
+                              style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+                              onPressed: () => Get.back(result: true),
+                              child: const Text('Hapus'),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirm == true) {
+                        controller.deleteChat(chat);
+                      }
+                      return false;
+                    },
+                    background: Container(
+                      alignment: Alignment.centerRight,
+                      padding: const EdgeInsets.only(right: 20),
+                      decoration: BoxDecoration(
+                        color: AppColors.error.withValues(alpha: 0.85),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          Icon(Icons.delete_sweep_rounded, color: Colors.white, size: 22),
+                          SizedBox(width: 6),
+                          Text('Hapus', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                        ],
+                      ),
+                    ),
+                    child: ChatItemTile(
+                      chat: chat,
+                      isSelected: isSelected,
+                      isOnline: chat.userId != null && controller.onlineUsers.contains(chat.userId),
+                      onTap: () => controller.selectChat(chat, isWideScreen: isWide),
+                    ),
                   );
                 },
               );

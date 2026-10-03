@@ -5,15 +5,18 @@ import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../../core/constants/api_endpoints.dart';
 import '../../../core/services/logger_service.dart';
+import '../../../core/services/permission_service.dart';
 import '../../../core/services/snackbar_service.dart';
 import '../../../core/services/storage_service.dart';
 import '../../../core/services/upload_service.dart';
 import '../../../core/services/voice_recorder_service.dart';
 import '../../../core/services/websocket_service.dart';
+import '../../../core/utils/app_haptics.dart';
 import '../../../routes/app_routes.dart';
 import '../../call/controllers/call_controller.dart';
 import '../../call/models/call_log_model.dart';
 import '../../call/models/call_session_model.dart';
+import '../../auth/models/user_model.dart';
 import '../models/chat_room_model.dart';
 import '../models/message_model.dart';
 import '../repositories/chat_repository.dart';
@@ -45,7 +48,10 @@ class ChatController extends GetxController {
   final isOtherUserTyping = false.obs;
   final searchQuery = ''.obs;
   final onlineUsers = <int>{}.obs;
+  final userLastSeen = <int, DateTime>{}.obs;
   final incomingRequestCount = 0.obs;
+  final replyingMessage = Rxn<MessageModel>();
+  final messageReactions = <String, List<String>>{}.obs;
 
   // Controllers
   final messageInputController = TextEditingController();
@@ -59,20 +65,34 @@ class ChatController extends GetxController {
   StreamSubscription? _typingSub;
   StreamSubscription? _presenceSub;
 
-  int get currentUserId {
-    final profile = storageService.userProfile;
-    if (profile != null && profile['id'] != null) {
-      return profile['id'] as int;
-    }
-    return 0;
-  }
+  int get currentUserId => storageService.currentUserId;
 
   @override
   void onInit() {
     super.onInit();
     messageInputController.addListener(_onInputTextChanged);
+    _ensureUserProfile();
     loadChats();
     _initWebSocket();
+  }
+
+  Future<void> _ensureUserProfile() async {
+    if (storageService.currentUserId == 0 && storageService.isLoggedIn) {
+      try {
+        final response = await repository.apiClient.get(ApiEndpoints.me);
+        final responseData = response.data;
+        final data = responseData is Map && responseData['data'] != null
+            ? responseData['data']
+            : responseData;
+        if (data is Map) {
+          final user = UserModel.fromJson(Map<String, dynamic>.from(data));
+          await storageService.saveUserProfile(user.toJson());
+          LoggerService.i('ChatController resolved user profile, currentUserId = ${user.id}', tag: 'ChatController');
+        }
+      } catch (e) {
+        LoggerService.w('ChatController could not fetch user profile: $e', tag: 'ChatController');
+      }
+    }
   }
 
   void _onInputTextChanged() {
@@ -86,7 +106,56 @@ class ChatController extends GetxController {
     wsService.connect();
 
     _msgSub = wsService.onMessage.listen((event) {
+      final eventType = event['type'] as String?;
       final msgData = event['data'] ?? event;
+
+      // Handle read receipt event broadcast from server
+      if (eventType == 'read_messages') {
+        if (msgData is Map) {
+          final chatId = msgData['chat_id'] is int
+              ? msgData['chat_id'] as int
+              : int.tryParse('${msgData['chat_id']}');
+          final readerId = msgData['user_id'] is int
+              ? msgData['user_id'] as int
+              : int.tryParse('${msgData['user_id']}');
+
+          LoggerService.i(
+            'Processing read_messages: chatId=$chatId, readerId=$readerId, currentUserId=$currentUserId, activeChatId=${activeChat.value?.id}',
+            tag: 'ChatController',
+          );
+
+          // Update chat list item if applicable
+          if (chatId != null) {
+            final chatIndex = chats.indexWhere((c) => c.id == chatId);
+            if (chatIndex != -1) {
+              final c = chats[chatIndex];
+              if (readerId == currentUserId) {
+                chats[chatIndex] = c.copyWith(unreadCount: 0);
+              } else if (c.lastMessage != null && !c.lastMessage!.isRead) {
+                chats[chatIndex] = c.copyWith(
+                  lastMessage: c.lastMessage!.copyWith(isRead: true),
+                );
+              }
+            }
+          }
+
+          // If active chat is open, immediately mark sent messages as read (double checkmark)
+          if (chatId != null && activeChat.value?.id == chatId) {
+            final updated = messages.map((m) {
+              final isSentByMe = m.senderId == currentUserId || (readerId != null && m.senderId != readerId);
+              if (isSentByMe && !m.isRead) {
+                return m.copyWith(isRead: true);
+              }
+              return m;
+            }).toList();
+            messages.assignAll(updated);
+            messages.refresh();
+            LoggerService.i('Marked ${updated.where((m) => m.isRead).length} messages as read for chatId=$chatId', tag: 'ChatController');
+          }
+        }
+        return;
+      }
+
       if (msgData is Map) {
         final chatId = msgData['chat_id'] is int
             ? msgData['chat_id'] as int
@@ -95,12 +164,17 @@ class ChatController extends GetxController {
           final newMsg = MessageModel.fromJson(Map<String, dynamic>.from(msgData));
           final newId = newMsg.id;
 
-          // Avoid duplicate insertion
-          final isDuplicate = messages.any((m) {
+          // If incoming message is from opponent while chat is active, automatically mark as read
+          if (newMsg.senderId != currentUserId && newMsg.senderId != 0) {
+            markMessagesAsRead(chatId);
+          }
+
+          // Avoid duplicate insertion or replace optimistic local message
+          final existingIndex = messages.indexWhere((m) {
             if (newId.isNotEmpty && m.id.isNotEmpty && m.id == newId) return true;
             if (m.content == newMsg.content &&
                 m.senderId == newMsg.senderId &&
-                m.createdAt == newMsg.createdAt) {
+                (m.id.isEmpty || m.id == newId)) {
               return true;
             }
             if (isCallLog(m.content) && isCallLog(newMsg.content)) {
@@ -113,9 +187,16 @@ class ChatController extends GetxController {
             return false;
           });
 
-          if (!isDuplicate) {
+          if (existingIndex >= 0) {
+            messages[existingIndex] = newMsg;
+          } else {
             messages.insert(0, newMsg);
             _scrollToBottom();
+          }
+
+          if (newMsg.senderId != currentUserId) {
+            onlineUsers.add(newMsg.senderId);
+            userLastSeen[newMsg.senderId] = DateTime.now();
           }
         }
       }
@@ -126,6 +207,10 @@ class ChatController extends GetxController {
       if (data != null) {
         final chatId = data['chat_id'] as int?;
         final senderId = data['user_id'] as int?;
+        if (senderId != null && senderId != currentUserId) {
+          onlineUsers.add(senderId);
+          userLastSeen[senderId] = DateTime.now();
+        }
         if (chatId == activeChat.value?.id && senderId != currentUserId) {
           isOtherUserTyping.value = true;
           _typingResetTimer?.cancel();
@@ -146,6 +231,14 @@ class ChatController extends GetxController {
           onlineUsers.add(userId);
         } else if (type == 'user_offline') {
           onlineUsers.remove(userId);
+          final timestampStr = event['timestamp'] as String? ?? data?['last_seen'] as String?;
+          final offlineTime = timestampStr != null
+              ? DateTime.tryParse(timestampStr) ?? DateTime.now()
+              : DateTime.now();
+          userLastSeen[userId] = offlineTime;
+          if (activeChat.value?.userId == userId) {
+            activeChat.value = activeChat.value?.copyWith(lastSeen: offlineTime);
+          }
         }
       }
     });
@@ -156,6 +249,13 @@ class ChatController extends GetxController {
       isLoadingChats.value = true;
       final result = await repository.getChats(search: searchQuery.value);
       chats.assignAll(result);
+
+      for (final chat in result) {
+        if (chat.userId != null && chat.lastSeen != null) {
+          userLastSeen[chat.userId!] = chat.lastSeen!;
+        }
+      }
+
       LoggerService.i('Loaded ${result.length} chats', tag: 'ChatController');
 
       // Also refresh incoming request badge count
@@ -178,7 +278,16 @@ class ChatController extends GetxController {
       wsService.leaveChat(activeChat.value!.id);
     }
 
-    activeChat.value = chat;
+    if (chat.userId != null) {
+      if (chat.lastSeen != null) {
+        userLastSeen.putIfAbsent(chat.userId!, () => chat.lastSeen!);
+      }
+      final latestLastSeen = userLastSeen[chat.userId!] ?? chat.lastSeen;
+      activeChat.value = chat.copyWith(lastSeen: latestLastSeen);
+    } else {
+      activeChat.value = chat;
+    }
+
     messageInputController.clear();
     hasInputText.value = false;
     wsService.joinChat(chat.id);
@@ -202,10 +311,23 @@ class ChatController extends GetxController {
       });
       messages.assignAll(result);
       _scrollToBottom();
+
+      // Automatically mark as read when entering the chat
+      if (result.isNotEmpty) {
+        markMessagesAsRead(chatId);
+      }
     } catch (e) {
       LoggerService.e('Failed to load messages: $e', tag: 'ChatController');
     } finally {
       isLoadingMessages.value = false;
+    }
+  }
+
+  Future<void> markMessagesAsRead(int chatId) async {
+    try {
+      await repository.markAsRead(chatId);
+    } catch (e) {
+      LoggerService.w('Failed to mark messages as read: $e', tag: 'ChatController');
     }
   }
 
@@ -216,26 +338,97 @@ class ChatController extends GetxController {
     }
   }
 
+  void setReply(MessageModel message) {
+    replyingMessage.value = message;
+    AppHaptics.medium();
+  }
+
+  void clearReply() {
+    replyingMessage.value = null;
+    AppHaptics.light();
+  }
+
+  void toggleReaction(String messageId, String emoji) {
+    AppHaptics.light();
+    final list = List<String>.from(messageReactions[messageId] ?? []);
+    if (list.contains(emoji)) {
+      list.remove(emoji);
+    } else {
+      list.add(emoji);
+    }
+    if (list.isEmpty) {
+      messageReactions.remove(messageId);
+    } else {
+      messageReactions[messageId] = list;
+    }
+  }
+
+  Future<void> deleteMessage(MessageModel message) async {
+    final chat = activeChat.value;
+    if (chat == null) return;
+    try {
+      AppHaptics.heavy();
+      final success = await repository.deleteMessage(message.id, chat.id);
+      if (success) {
+        messages.removeWhere((m) => m.id == message.id);
+        SnackbarService.success('Pesan berhasil dihapus');
+      } else {
+        SnackbarService.error('Gagal menghapus pesan');
+      }
+    } catch (e) {
+      SnackbarService.error('Terjadi kesalahan saat menghapus pesan');
+    }
+  }
+
+  Future<void> deleteChat(ChatRoomModel chat) async {
+    try {
+      AppHaptics.heavy();
+      final success = await repository.deleteChat(chat.id);
+      if (success) {
+        chats.removeWhere((c) => c.id == chat.id);
+        if (activeChat.value?.id == chat.id) {
+          activeChat.value = null;
+        }
+        SnackbarService.success('Obrolan berhasil dihapus');
+      } else {
+        SnackbarService.error('Gagal menghapus obrolan');
+      }
+    } catch (e) {
+      SnackbarService.error('Terjadi kesalahan saat menghapus obrolan');
+    }
+  }
+
   Future<void> sendMessage({String type = 'text', String? customContent}) async {
     final text = customContent ?? messageInputController.text.trim();
     final chat = activeChat.value;
 
     if (text.isEmpty || chat == null) return;
 
+    final currentReply = replyingMessage.value;
+    replyingMessage.value = null;
+
     try {
+      AppHaptics.light();
       isSendingMessage.value = true;
       if (customContent == null) {
         messageInputController.clear();
       }
 
-      final sentMessage = await repository.sendMessage(
+      final rawSent = await repository.sendMessage(
         chatId: chat.id,
         content: text,
         messageType: type,
+        currentUserId: currentUserId,
       );
+      final sentMessage = rawSent.copyWith(replyTo: currentReply);
 
       final isDuplicate = messages.any((m) {
         if (sentMessage.id.isNotEmpty && m.id.isNotEmpty && m.id == sentMessage.id) return true;
+        if (m.content == sentMessage.content &&
+            m.senderId == sentMessage.senderId &&
+            m.createdAt == sentMessage.createdAt) {
+          return true;
+        }
         if (isCallLog(m.content) && isCallLog(sentMessage.content)) {
           final log1 = parseCallLog(m.content);
           final log2 = parseCallLog(sentMessage.content);
@@ -250,6 +443,7 @@ class ChatController extends GetxController {
         messages.insert(0, sentMessage);
       }
       _scrollToBottom();
+      loadChats();
     } catch (e) {
       LoggerService.e('Failed to send message: $e', tag: 'ChatController');
       SnackbarService.error('Gagal mengirim pesan.');
@@ -260,6 +454,10 @@ class ChatController extends GetxController {
 
   // Voice Note Recording Flow
   Future<void> startVoiceRecording() async {
+    final granted = await PermissionService.requestMicrophone(
+      reason: 'merekam pesan suara',
+    );
+    if (!granted) return;
     await voiceRecorderService.startRecording();
   }
 
@@ -289,6 +487,13 @@ class ChatController extends GetxController {
 
   // Image & File Sharing Flow
   Future<void> pickAndSendImage(ImageSource source) async {
+    if (source == ImageSource.camera) {
+      final granted = await PermissionService.requestCamera(
+        reason: 'mengambil foto langsung dari kamera',
+      );
+      if (!granted) return;
+    }
+
     final picked = await _imagePicker.pickImage(source: source, imageQuality: 85);
     if (picked == null) return;
 
@@ -367,7 +572,9 @@ class ChatController extends GetxController {
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (messageScrollController.hasClients) {
+      if (messageScrollController.hasClients &&
+          messageScrollController.position.hasContentDimensions &&
+          messageScrollController.offset > 10.0) {
         messageScrollController.animateTo(
           0.0,
           duration: const Duration(milliseconds: 250),
@@ -375,6 +582,58 @@ class ChatController extends GetxController {
         );
       }
     });
+  }
+
+  String formatLastSeen(DateTime? lastSeen) {
+    if (lastSeen == null) return 'Offline';
+
+    final now = DateTime.now();
+    final local = lastSeen.toLocal();
+    final timeStr =
+        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+
+    final diff = now.difference(local);
+    if (diff.inMinutes < 1) {
+      return 'Terakhir online baru saja';
+    }
+
+    final isToday = now.year == local.year &&
+        now.month == local.month &&
+        now.day == local.day;
+    if (isToday) {
+      return 'Terakhir online $timeStr';
+    }
+
+    final yesterday = now.subtract(const Duration(days: 1));
+    final isYesterday = yesterday.year == local.year &&
+        yesterday.month == local.month &&
+        yesterday.day == local.day;
+    if (isYesterday) {
+      return 'Terakhir online kemarin $timeStr';
+    }
+
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
+      'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'
+    ];
+    final monthStr = months[local.month - 1];
+
+    if (now.year == local.year) {
+      return 'Terakhir online ${local.day} $monthStr $timeStr';
+    }
+
+    return 'Terakhir online ${local.day} $monthStr ${local.year} $timeStr';
+  }
+
+  String getChatStatusText(ChatRoomModel chat) {
+    if (chat.type == 'group') return 'Grup';
+    final isOnline = chat.userId != null && onlineUsers.contains(chat.userId);
+    if (isOnline) return 'Online';
+
+    final dt = chat.userId != null
+        ? (userLastSeen[chat.userId] ?? chat.lastSeen)
+        : chat.lastSeen;
+    return formatLastSeen(dt);
   }
 
   @override

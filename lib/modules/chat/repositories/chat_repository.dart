@@ -90,18 +90,54 @@ class ChatRepository {
     required int chatId,
     required String content,
     String messageType = 'text',
+    int currentUserId = 0,
   }) async {
     final response = await apiClient.post(
       ApiEndpoints.messages,
       data: {
         'chat_id': chatId,
         'content': content,
+        'type': messageType,
         'message_type': messageType,
       },
     );
 
     final resData = response.data;
     final data = resData is Map && resData['data'] != null ? resData['data'] : resData;
-    return MessageModel.fromJson(Map<String, dynamic>.from(data as Map));
+
+    final rawId = data is Map ? (data['id']?.toString() ?? '') : '';
+    return MessageModel(
+      id: rawId,
+      chatId: chatId,
+      senderId: currentUserId,
+      content: content,
+      messageType: messageType,
+      createdAt: DateTime.now().toUtc().toIso8601String(),
+      isRead: false,
+    );
+  }
+
+  Future<void> markAsRead(int chatId) async {
+    await apiClient.patch(
+      ApiEndpoints.chatMembersLastMessage,
+      data: {'chat_id': chatId},
+    );
+  }
+  Future<bool> deleteChat(int chatId) async {
+    try {
+      final response = await apiClient.delete('${ApiEndpoints.chats}/$chatId');
+      return response.statusCode == 200 || response.statusCode == 204;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> deleteMessage(String messageId, int chatId) async {
+    try {
+      final response = await apiClient.delete('${ApiEndpoints.messages}/$messageId/chats/$chatId');
+      return response.statusCode == 200 || response.statusCode == 204;
+    } catch (_) {
+      return false;
+    }
   }
 }

@@ -1,22 +1,23 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:get/get.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/constants/api_endpoints.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/services/logger_service.dart';
+import '../../../core/services/permission_service.dart';
 import '../../../core/services/snackbar_service.dart';
 import '../../../core/services/storage_service.dart';
 import '../../../core/services/websocket_service.dart';
+import '../../../routes/app_routes.dart';
 import '../models/call_log_model.dart';
 import '../models/call_session_model.dart';
-import '../views/call_view.dart';
 import '../views/incoming_call_dialog.dart';
 
 class CallController extends GetxController {
@@ -28,16 +29,81 @@ class CallController extends GetxController {
   final isMuted = false.obs;
   final isVideoEnabled = true.obs;
   final isSpeakerOn = false.obs;
+  final isScreenSharing = false.obs;
 
   final localRenderer = RTCVideoRenderer();
   final remoteRenderer = RTCVideoRenderer();
 
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
+  MediaStream? _screenStream;
   Timer? _durationTimer;
   StreamSubscription? _signalingSub;
-  Map<String, dynamic>? _pendingOfferSDP;
+  RTCSessionDescription? _pendingOfferSDP;
+  final _pendingCandidates = <RTCIceCandidate>[];
   final _recordedCallIds = <String>{};
+  bool _isCleaningUp = false;
+
+  RTCSessionDescription? _parseSessionDescription(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is RTCSessionDescription) return raw;
+    if (raw is Map) {
+      final inner = raw['sdp'];
+      if (inner is Map) {
+        return RTCSessionDescription(
+          inner['sdp']?.toString() ?? '',
+          inner['type']?.toString() ?? 'answer',
+        );
+      }
+      final sdpStr = raw['sdp']?.toString() ?? raw['description']?.toString() ?? '';
+      final typeStr = raw['type']?.toString() ?? 'answer';
+      return RTCSessionDescription(sdpStr, typeStr);
+    }
+    if (raw is String) {
+      try {
+        final decoded = jsonDecode(raw);
+        return _parseSessionDescription(decoded);
+      } catch (_) {
+        return RTCSessionDescription(raw, 'answer');
+      }
+    }
+    return null;
+  }
+
+  String _preferCodec(String sdp, String codecName) {
+    final delimiter = sdp.contains('\r\n') ? '\r\n' : '\n';
+    final lines = sdp.split(delimiter);
+    final mVideoIndex = lines.indexWhere((l) => l.startsWith('m=video '));
+    if (mVideoIndex == -1) return sdp;
+
+    // Find all payload types for the requested codec (e.g. VP8)
+    final codecPayloads = <String>[];
+    final rtpmapRegex = RegExp(
+      r'^a=rtpmap:(\d+)\s+' + RegExp.escape(codecName) + r'/90000',
+      caseSensitive: false,
+    );
+    for (final line in lines) {
+      final match = rtpmapRegex.firstMatch(line);
+      if (match != null) {
+        codecPayloads.add(match.group(1)!);
+      }
+    }
+
+    if (codecPayloads.isEmpty) return sdp;
+
+    // m=video <port> <proto> <payloadType1> <payloadType2> ...
+    final mLineTokens = lines[mVideoIndex].split(' ');
+    if (mLineTokens.length < 4) return sdp;
+
+    final header = mLineTokens.sublist(0, 3);
+    final originalPayloads = mLineTokens.sublist(3);
+
+    final otherPayloads = originalPayloads.where((pt) => !codecPayloads.contains(pt)).toList();
+    final newPayloads = [...codecPayloads, ...otherPayloads];
+
+    lines[mVideoIndex] = '${header.join(' ')} ${newPayloads.join(' ')}';
+    return lines.join(delimiter);
+  }
 
   Map<String, dynamic> get _rtcConfig {
     final rawStunUrl = AppConstants.stunUrl;
@@ -119,7 +185,7 @@ class CallController extends GetxController {
             ? CallType.video
             : CallType.audio;
 
-        _pendingOfferSDP = data['sdp'] as Map<String, dynamic>?;
+        _pendingOfferSDP = _parseSessionDescription(data['sdp']);
 
         currentCall.value = CallSessionModel(
           callId: callId,
@@ -136,10 +202,23 @@ class CallController extends GetxController {
 
       case 'call:answer':
         if (currentCall.value != null && currentCall.value!.isCaller) {
-          final sdpData = data['sdp'] as Map<String, dynamic>?;
-          if (sdpData != null && _peerConnection != null) {
-            final desc = RTCSessionDescription(sdpData['sdp'], sdpData['type']);
+          final desc = _parseSessionDescription(data['sdp']);
+          if (desc != null && _peerConnection != null) {
             await _peerConnection!.setRemoteDescription(desc);
+
+            // Flush pending ICE candidates
+            for (final candidate in _pendingCandidates) {
+              await _peerConnection!.addCandidate(candidate);
+            }
+            _pendingCandidates.clear();
+
+            // Ensure all local tracks are unmuted and active
+            if (_localStream != null) {
+              for (final track in _localStream!.getTracks()) {
+                track.enabled = true;
+              }
+            }
+
             currentCall.value!.state = CallState.connected;
             currentCall.refresh();
             _startDurationTimer();
@@ -147,19 +226,35 @@ class CallController extends GetxController {
               'Call connected with remote peer',
               tag: 'CallController',
             );
+          } else {
+            LoggerService.w('Unable to process call:answer, invalid SDP: ${data['sdp']}', tag: 'CallController');
           }
         }
         break;
 
       case 'call:ice_candidate':
-        final candData = data['candidate'] as Map<String, dynamic>?;
-        if (candData != null && _peerConnection != null) {
-          final candidate = RTCIceCandidate(
-            candData['candidate'],
-            candData['sdpMid'],
-            candData['sdpMLineIndex'],
-          );
-          await _peerConnection!.addCandidate(candidate);
+        final rawCand = data['candidate'];
+        if (rawCand is Map) {
+          final candidateStr = rawCand['candidate']?.toString();
+          final sdpMid = rawCand['sdpMid']?.toString();
+          final sdpMLineIndexRaw = rawCand['sdpMLineIndex'];
+          final sdpMLineIndex = sdpMLineIndexRaw is int
+              ? sdpMLineIndexRaw
+              : int.tryParse('$sdpMLineIndexRaw');
+
+          if (candidateStr != null && candidateStr.isNotEmpty) {
+            final candidate = RTCIceCandidate(candidateStr, sdpMid, sdpMLineIndex);
+            if (_peerConnection != null) {
+              final remoteDesc = await _peerConnection!.getRemoteDescription();
+              if (remoteDesc != null && remoteDesc.sdp != null) {
+                await _peerConnection!.addCandidate(candidate);
+              } else {
+                _pendingCandidates.add(candidate);
+              }
+            } else {
+              _pendingCandidates.add(candidate);
+            }
+          }
         }
         break;
 
@@ -204,12 +299,7 @@ class CallController extends GetxController {
 
     final callType = mediaType == 'video' ? CallType.video : CallType.audio;
     if (sdpOffer != null) {
-      try {
-        final decoded = jsonDecode(sdpOffer);
-        if (decoded is Map<String, dynamic>) {
-          _pendingOfferSDP = decoded;
-        }
-      } catch (_) {}
+      _pendingOfferSDP = _parseSessionDescription(sdpOffer);
     }
 
     currentCall.value = CallSessionModel(
@@ -233,32 +323,9 @@ class CallController extends GetxController {
   }
 
   Future<bool> _checkAndRequestPermissions(CallType callType) async {
-    final permissions = <Permission>[Permission.microphone];
-    if (callType == CallType.video) {
-      permissions.add(Permission.camera);
-    }
-
-    final statuses = await permissions.request();
-    final allGranted = statuses.values.every((s) => s.isGranted);
-
-    if (!allGranted) {
-      final permanentlyDenied = statuses.values.any((s) => s.isPermanentlyDenied);
-
-      if (permanentlyDenied) {
-        SnackbarService.warning(
-          'Izin mikrofon/kamera diblokir. Silakan aktifkan di Pengaturan Aplikasi.',
-        );
-        openAppSettings();
-      } else {
-        SnackbarService.warning(
-          callType == CallType.video
-              ? 'Izin kamera dan mikrofon diperlukan untuk panggilan video.'
-              : 'Izin mikrofon diperlukan untuk melakukan panggilan.',
-        );
-      }
-      return false;
-    }
-    return true;
+    return await PermissionService.requestCallPermissions(
+      isVideo: callType == CallType.video,
+    );
   }
 
   Future<void> startCall({
@@ -287,10 +354,16 @@ class CallController extends GetxController {
       await _createPeerConnection(targetUserId, callId);
 
       // Create SDP Offer
-      final offer = await _peerConnection!.createOffer({
+      var offer = await _peerConnection!.createOffer({
         'offerToReceiveAudio': true,
         'offerToReceiveVideo': callType == CallType.video,
       });
+
+      if (callType == CallType.video && offer.sdp != null) {
+        final mungedSdp = _preferCodec(offer.sdp!, 'VP8');
+        offer = RTCSessionDescription(mungedSdp, offer.type);
+      }
+
       await _peerConnection!.setLocalDescription(offer);
 
       // Send offer to remote user via WebSocket
@@ -304,7 +377,7 @@ class CallController extends GetxController {
         },
       );
 
-      Get.to(() => const CallView());
+      Get.toNamed(Routes.call);
     } catch (e) {
       LoggerService.e('Failed to start call: $e', tag: 'CallController');
       SnackbarService.error('Gagal memulai panggilan: $e');
@@ -331,18 +404,52 @@ class CallController extends GetxController {
       await _createPeerConnection(call.targetUserId, call.callId);
 
       // Set remote offer SDP
-      final remoteDesc = RTCSessionDescription(
-        _pendingOfferSDP!['sdp'],
-        _pendingOfferSDP!['type'],
-      );
+      final remoteDesc = _parseSessionDescription(_pendingOfferSDP);
+      if (remoteDesc == null) {
+        throw Exception('Invalid offer SDP');
+      }
       await _peerConnection!.setRemoteDescription(remoteDesc);
 
+      // Flush queued candidates that arrived before setRemoteDescription
+      for (final candidate in _pendingCandidates) {
+        await _peerConnection!.addCandidate(candidate);
+      }
+      _pendingCandidates.clear();
+
+      // Ensure transceivers are configured to SendRecv for active call media
+      try {
+        final transceivers = await _peerConnection!.getTransceivers();
+        for (final transceiver in transceivers) {
+          final kind = transceiver.sender.track?.kind ?? transceiver.receiver.track?.kind;
+          if (kind == 'video' && call.callType == CallType.video) {
+            await transceiver.setDirection(TransceiverDirection.SendRecv);
+          } else if (kind == 'audio') {
+            await transceiver.setDirection(TransceiverDirection.SendRecv);
+          }
+        }
+      } catch (e) {
+        LoggerService.w('Transceiver direction update warning: $e', tag: 'CallController');
+      }
+
       // Create SDP Answer
-      final answer = await _peerConnection!.createAnswer({
+      var answer = await _peerConnection!.createAnswer({
         'offerToReceiveAudio': true,
         'offerToReceiveVideo': call.callType == CallType.video,
       });
+
+      if (call.callType == CallType.video && answer.sdp != null) {
+        final mungedSdp = _preferCodec(answer.sdp!, 'VP8');
+        answer = RTCSessionDescription(mungedSdp, answer.type);
+      }
+
       await _peerConnection!.setLocalDescription(answer);
+
+      // Ensure local tracks are active and unmuted
+      if (_localStream != null) {
+        for (final track in _localStream!.getTracks()) {
+          track.enabled = true;
+        }
+      }
 
       // Send answer via WebSocket
       wsService.sendCallSignaling(
@@ -355,7 +462,7 @@ class CallController extends GetxController {
       );
 
       _startDurationTimer();
-      Get.to(() => const CallView());
+      Get.toNamed(Routes.call);
     } catch (e) {
       LoggerService.e('Failed to accept call: $e', tag: 'CallController');
       SnackbarService.error('Gagal menerima panggilan: $e');
@@ -364,21 +471,25 @@ class CallController extends GetxController {
   }
 
   void rejectCall() {
+    if (_isCleaningUp) return;
     final call = currentCall.value;
-    if (call != null) {
+    if (call != null && call.state != CallState.ended) {
       wsService.sendCallSignaling(
         type: 'call:reject',
         targetUserId: call.targetUserId,
         data: {'call_id': call.callId},
       );
     }
-    Get.back(); // Dismiss dialog
+    if (Get.isDialogOpen ?? false) {
+      Get.back(); // Dismiss dialog
+    }
     _endCallCleanup(notifyRemote: false, status: 'declined');
   }
 
   void hangup() {
+    if (_isCleaningUp) return;
     final call = currentCall.value;
-    if (call != null) {
+    if (call != null && call.state != CallState.ended) {
       wsService.sendCallSignaling(
         type: 'call:hangup',
         targetUserId: call.targetUserId,
@@ -392,7 +503,15 @@ class CallController extends GetxController {
   }
 
   Future<void> _initLocalMedia(CallType callType) async {
-    final mediaConstraints = {
+    // Ensure native video renderers are fully initialized before assigning stream
+    if (localRenderer.textureId == null) {
+      await localRenderer.initialize();
+    }
+    if (remoteRenderer.textureId == null) {
+      await remoteRenderer.initialize();
+    }
+
+    final mediaConstraints = <String, dynamic>{
       'audio': {
         'echoCancellation': true,
         'noiseSuppression': true,
@@ -400,9 +519,14 @@ class CallController extends GetxController {
       },
       'video': callType == CallType.video
           ? {
+              'mandatory': {
+                'minWidth': '640',
+                'minHeight': '480',
+                'minFrameRate': '15',
+                'maxFrameRate': '30',
+              },
               'facingMode': 'user',
-              'width': {'ideal': 640},
-              'height': {'ideal': 480},
+              'optional': [],
             }
           : false,
     };
@@ -411,7 +535,17 @@ class CallController extends GetxController {
       _localStream = await rtc.navigator.mediaDevices.getUserMedia(
         mediaConstraints,
       );
+      // Ensure all tracks in the acquired local stream are enabled
+      for (final track in _localStream!.getTracks()) {
+        track.enabled = true;
+      }
       localRenderer.srcObject = _localStream;
+      isVideoEnabled.value = callType == CallType.video;
+      isMuted.value = false;
+      LoggerService.i(
+        'getUserMedia success: ${_localStream?.getAudioTracks().length} audio, ${_localStream?.getVideoTracks().length} video',
+        tag: 'CallController',
+      );
     } catch (e) {
       LoggerService.e('getUserMedia failed: $e', tag: 'CallController');
       rethrow;
@@ -425,10 +559,17 @@ class CallController extends GetxController {
     Helper.setSpeakerphoneOn(true);
     isSpeakerOn.value = true;
 
-    // Add local tracks
-    _localStream?.getTracks().forEach((track) {
-      _peerConnection?.addTrack(track, _localStream!);
-    });
+    // Add local tracks and await each addition so they are registered before SDP generation
+    if (_localStream != null) {
+      for (final track in _localStream!.getTracks()) {
+        track.enabled = true;
+        await _peerConnection!.addTrack(track, _localStream!);
+        LoggerService.i(
+          'Added local ${track.kind} track to peerConnection: trackId=${track.id}',
+          tag: 'CallController',
+        );
+      }
+    }
 
     // Handle ICE Candidates
     _peerConnection?.onIceCandidate = (candidate) {
@@ -449,18 +590,56 @@ class CallController extends GetxController {
     };
 
     // Handle Remote Track
-    _peerConnection?.onTrack = (event) {
-      if (event.streams.isNotEmpty) {
-        remoteRenderer.srcObject = event.streams[0];
+    _peerConnection?.onTrack = (RTCTrackEvent event) async {
+      LoggerService.i(
+        'onTrack: kind=${event.track.kind}, id=${event.track.id}, streams=${event.streams.length}',
+        tag: 'CallController',
+      );
+      event.track.enabled = true;
+
+      if (event.track.kind == 'video') {
+        if (event.streams.isNotEmpty) {
+          remoteRenderer.srcObject = event.streams[0];
+        } else {
+          try {
+            final stream = await createLocalMediaStream('remote_stream_video');
+            await stream.addTrack(event.track);
+            remoteRenderer.srcObject = stream;
+          } catch (e) {
+            LoggerService.e('Failed to create fallback remote video stream: $e', tag: 'CallController');
+          }
+        }
+        currentCall.refresh();
       }
     };
 
     // Handle connection state
     _peerConnection?.onConnectionState = (state) {
       LoggerService.d('RTCPeerConnection state: $state', tag: 'CallController');
-      if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+        if (currentCall.value != null && currentCall.value!.state != CallState.connected) {
+          currentCall.value!.state = CallState.connected;
+          currentCall.refresh();
+          _startDurationTimer();
+        }
+      } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
-        hangup();
+        if (!_isCleaningUp && currentCall.value != null && currentCall.value!.state != CallState.ended) {
+          hangup();
+        }
+      }
+    };
+
+    // Handle ICE connection state
+    _peerConnection?.onIceConnectionState = (state) {
+      LoggerService.d('RTCIceConnectionState: $state', tag: 'CallController');
+      if (state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
+          state == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
+        if (currentCall.value != null && currentCall.value!.state != CallState.connected) {
+          currentCall.value!.state = CallState.connected;
+          currentCall.refresh();
+          _startDurationTimer();
+        }
       }
     };
   }
@@ -501,6 +680,72 @@ class CallController extends GetxController {
     Helper.setSpeakerphoneOn(isSpeakerOn.value);
   }
 
+  Future<void> toggleScreenShare() async {
+    if (isScreenSharing.value) {
+      await stopScreenShare();
+    } else {
+      await startScreenShare();
+    }
+  }
+
+  Future<void> startScreenShare() async {
+    try {
+      final screenStream = await rtc.navigator.mediaDevices.getDisplayMedia(<String, dynamic>{
+        'video': true,
+        'audio': false,
+      });
+
+      _screenStream = screenStream;
+      final screenTrack = screenStream.getVideoTracks().firstOrNull;
+      if (screenTrack != null) {
+        screenTrack.onEnded = () {
+          stopScreenShare();
+        };
+
+        if (_peerConnection != null) {
+          final senders = await _peerConnection!.getSenders();
+          for (final sender in senders) {
+            if (sender.track?.kind == 'video') {
+              await sender.replaceTrack(screenTrack);
+            }
+          }
+        }
+
+        localRenderer.srcObject = screenStream;
+        isScreenSharing.value = true;
+        LoggerService.i('Screen sharing started', tag: 'CallController');
+      }
+    } catch (e) {
+      LoggerService.e('Failed to start screen share: $e', tag: 'CallController');
+      SnackbarService.error('Gagal memulai bagikan layar: $e');
+    }
+  }
+
+  Future<void> stopScreenShare() async {
+    try {
+      _screenStream?.getTracks().forEach((t) => t.stop());
+      await _screenStream?.dispose();
+      _screenStream = null;
+
+      if (_localStream != null) {
+        final localVideoTrack = _localStream!.getVideoTracks().firstOrNull;
+        if (_peerConnection != null && localVideoTrack != null) {
+          final senders = await _peerConnection!.getSenders();
+          for (final sender in senders) {
+            if (sender.track?.kind == 'video') {
+              await sender.replaceTrack(localVideoTrack);
+            }
+          }
+        }
+        localRenderer.srcObject = _localStream;
+      }
+      isScreenSharing.value = false;
+      LoggerService.i('Screen sharing stopped', tag: 'CallController');
+    } catch (e) {
+      LoggerService.e('Failed to stop screen share: $e', tag: 'CallController');
+    }
+  }
+
   void _startDurationTimer() {
     _durationTimer?.cancel();
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -511,51 +756,141 @@ class CallController extends GetxController {
     });
   }
 
-  void _endCallCleanup({bool notifyRemote = true, String status = 'completed'}) {
+  Future<void> _endCallCleanup({bool notifyRemote = true, String status = 'completed'}) async {
+    if (_isCleaningUp) return;
+    _isCleaningUp = true;
+
     _durationTimer?.cancel();
     _durationTimer = null;
 
     final call = currentCall.value;
-    if (call != null && call.isCaller && call.chatId != null) {
-      final int duration = call.duration;
-      final effectiveStatus = duration > 0 ? 'completed' : status;
-      _recordCallLog(
-        chatId: call.chatId!,
-        callId: call.callId,
-        callType: call.callType == CallType.video ? 'video' : 'audio',
-        status: effectiveStatus,
-        duration: duration,
-        receiverId: call.targetUserId,
-      );
+    if (call != null) {
+      call.state = CallState.ended;
+      call.endReason = status;
+      currentCall.refresh();
+
+      if (call.isCaller && call.chatId != null) {
+        final int duration = call.duration;
+        final effectiveStatus = duration > 0 ? 'completed' : status;
+        _recordCallLog(
+          chatId: call.chatId!,
+          callId: call.callId,
+          callType: call.callType == CallType.video ? 'video' : 'audio',
+          status: effectiveStatus,
+          duration: duration,
+          receiverId: call.targetUserId,
+        );
+      }
     }
 
-    try {
-      _localStream?.getTracks().forEach((t) => t.stop());
-      _localStream?.dispose();
-    } catch (_) {}
-    _localStream = null;
+    // 1. Immediately detach callbacks from peer connection so closing does not trigger listeners
+    if (_peerConnection != null) {
+      _peerConnection!.onConnectionState = null;
+      _peerConnection!.onIceCandidate = null;
+      _peerConnection!.onTrack = null;
+      _peerConnection!.onIceConnectionState = null;
+      _peerConnection!.onSignalingState = null;
+    }
 
+    // 2. Detach renderers BEFORE disposing native stream textures to avoid GPU/Metal deadlock
     localRenderer.srcObject = null;
     remoteRenderer.srcObject = null;
 
+    // 3. Reset loudspeaker safely
     try {
-      _peerConnection?.close();
+      Helper.setSpeakerphoneOn(false);
+      isSpeakerOn.value = false;
     } catch (_) {}
-    _peerConnection = null;
+
+    // 4. Safely stop and dispose screen stream
+    if (_screenStream != null) {
+      try {
+        for (final track in _screenStream!.getTracks()) {
+          try {
+            track.stop();
+          } catch (_) {}
+        }
+        await _screenStream!.dispose();
+      } catch (_) {}
+      _screenStream = null;
+    }
+    isScreenSharing.value = false;
+
+    // 5. Safely stop and dispose local mic/camera stream
+    if (_localStream != null) {
+      try {
+        for (final track in _localStream!.getTracks()) {
+          try {
+            track.stop();
+          } catch (_) {}
+        }
+        await _localStream!.dispose();
+      } catch (_) {}
+      _localStream = null;
+    }
+
+    // 6. Close and dispose peer connection safely
+    if (_peerConnection != null) {
+      try {
+        await _peerConnection!.close();
+      } catch (_) {}
+      try {
+        await _peerConnection!.dispose();
+      } catch (_) {}
+      _peerConnection = null;
+    }
 
     _pendingOfferSDP = null;
-    currentCall.value = null;
+    _pendingCandidates.clear();
 
-    // Navigate back to chat if CallView is open
+    // 7. Safely close any active call dialog or CallView on the next frame so gesture dispatch completes cleanly
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (Get.isDialogOpen ?? false) {
+        Get.back();
+      }
+      if (Get.currentRoute == Routes.call ||
+          Get.currentRoute.contains('call') ||
+          Get.currentRoute.contains('CallView')) {
+        Get.back();
+      }
+      // Wait for pop transition to finish before wiping session model
+      Future.delayed(const Duration(milliseconds: 300), () {
+        currentCall.value = null;
+        _isCleaningUp = false;
+      });
+    });
+  }
+
+  void closeCallView() {
     if (Get.isDialogOpen ?? false) {
       Get.back();
     }
-    if (Get.currentRoute.contains('CallView') ||
-        (Get.key.currentState?.canPop() ?? false)) {
-      try {
-        Get.back();
-      } catch (_) {}
+    if (Get.currentRoute == Routes.call ||
+        Get.currentRoute.contains('call') ||
+        Get.currentRoute.contains('CallView')) {
+      Get.back();
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      currentCall.value = null;
+    });
+  }
+
+  Future<void> redial() async {
+    final call = currentCall.value;
+    if (call == null) return;
+    final targetUserId = call.targetUserId;
+    final targetUserName = call.targetUserName;
+    final callType = call.callType;
+    final chatId = call.chatId;
+
+    currentCall.value = null;
+
+    await startCall(
+      targetUserId: targetUserId,
+      targetUserName: targetUserName,
+      callType: callType,
+      chatId: chatId,
+    );
   }
 
   Future<void> _recordCallLog({

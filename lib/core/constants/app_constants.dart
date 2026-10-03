@@ -108,4 +108,21 @@ class AppConstants {
         'GOOGLE_SERVER_CLIENT_ID',
         defaultValue: '897905079551-spocso10fecnvk87ops09hsefjehnmai.apps.googleusercontent.com',
       );
+
+  static String get googleIosClientId =>
+      dotenv.env['GOOGLE_IOS_CLIENT_ID'] ??
+      const String.fromEnvironment(
+        'GOOGLE_IOS_CLIENT_ID',
+        defaultValue: '',
+      );
+
+  // Apple Sign-In Configuration
+  // Default to false so it remains hidden until explicitly enabled
+  static bool get isAppleSignInEnabled {
+    final envVal = dotenv.env['ENABLE_APPLE_SIGN_IN'];
+    if (envVal != null) {
+      return envVal.toLowerCase() == 'true' || envVal == '1';
+    }
+    return const bool.fromEnvironment('ENABLE_APPLE_SIGN_IN', defaultValue: false);
+  }
 }

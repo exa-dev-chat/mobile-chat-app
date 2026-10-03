@@ -10,6 +10,7 @@ class ChatRoomModel {
   final String? updatedAt;
   final int unreadCount;
   final MessageModel? lastMessage;
+  final DateTime? lastSeen;
 
   ChatRoomModel({
     required this.id,
@@ -21,7 +22,34 @@ class ChatRoomModel {
     this.updatedAt,
     this.unreadCount = 0,
     this.lastMessage,
+    this.lastSeen,
   });
+
+  ChatRoomModel copyWith({
+    int? id,
+    int? userId,
+    String? type,
+    String? name,
+    String? avatar,
+    String? lastMessagePreview,
+    String? updatedAt,
+    int? unreadCount,
+    MessageModel? lastMessage,
+    DateTime? lastSeen,
+  }) {
+    return ChatRoomModel(
+      id: id ?? this.id,
+      userId: userId ?? this.userId,
+      type: type ?? this.type,
+      name: name ?? this.name,
+      avatar: avatar ?? this.avatar,
+      lastMessagePreview: lastMessagePreview ?? this.lastMessagePreview,
+      updatedAt: updatedAt ?? this.updatedAt,
+      unreadCount: unreadCount ?? this.unreadCount,
+      lastMessage: lastMessage ?? this.lastMessage,
+      lastSeen: lastSeen ?? this.lastSeen,
+    );
+  }
 
   factory ChatRoomModel.fromJson(Map<String, dynamic> json) {
     MessageModel? lastMsg;
@@ -38,6 +66,16 @@ class ChatRoomModel {
       }
     }
 
+    DateTime? parsedLastSeen;
+    final rawLastSeen = json['last_seen'];
+    if (rawLastSeen != null) {
+      if (rawLastSeen is String && rawLastSeen.isNotEmpty) {
+        parsedLastSeen = DateTime.tryParse(rawLastSeen);
+      } else if (rawLastSeen is DateTime) {
+        parsedLastSeen = rawLastSeen;
+      }
+    }
+
     return ChatRoomModel(
       id: (json['id'] is int ? json['id'] : int.tryParse('${json['id']}')) ?? 0,
       userId: json['user_id'] is int ? json['user_id'] as int : int.tryParse('${json['user_id']}'),
@@ -48,6 +86,7 @@ class ChatRoomModel {
       updatedAt: (json['last_message_at'] ?? json['updated_at'] ?? json['created_at']) as String?,
       unreadCount: (json['unread_count'] is int ? json['unread_count'] : int.tryParse('${json['unread_count']}')) ?? 0,
       lastMessage: lastMsg,
+      lastSeen: parsedLastSeen,
     );
   }
 
@@ -61,6 +100,7 @@ class ChatRoomModel {
       'last_message_preview': lastMessagePreview,
       'updated_at': updatedAt,
       'unread_count': unreadCount,
+      'last_seen': lastSeen?.toIso8601String(),
     };
   }
 }

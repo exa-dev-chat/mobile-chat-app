@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -194,6 +195,18 @@ class FcmService extends GetxService {
 
   Future<void> _fetchAndSyncToken() async {
     try {
+      if (Platform.isIOS) {
+        // On iOS, APNs token can take a couple seconds to register after app launch
+        String? apnsToken = await FirebaseMessaging.instance.getAPNSToken();
+        int retries = 0;
+        while (apnsToken == null && retries < 3) {
+          await Future.delayed(const Duration(seconds: 1));
+          apnsToken = await FirebaseMessaging.instance.getAPNSToken();
+          retries++;
+        }
+        LoggerService.i('APNs token status: ${apnsToken != null ? "Ready" : "Pending"}', tag: 'FcmService');
+      }
+
       _currentToken = await FirebaseMessaging.instance.getToken();
       if (_currentToken != null && _currentToken!.isNotEmpty) {
         LoggerService.i('FCM Token acquired: $_currentToken', tag: 'FcmService');
@@ -217,10 +230,10 @@ class FcmService extends GetxService {
         '/api/users/fcm-token',
         data: {
           'token': token,
-          'device_type': 'android',
+          'device_type': Platform.isIOS ? 'ios' : 'android',
         },
       );
-      LoggerService.i('FCM token synced with backend', tag: 'FcmService');
+      LoggerService.i('FCM token synced with backend (${Platform.isIOS ? "ios" : "android"})', tag: 'FcmService');
     } catch (e) {
       LoggerService.w('Failed to sync FCM token with backend: $e', tag: 'FcmService');
     }
