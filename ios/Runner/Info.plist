@@ -78,15 +78,15 @@
 	<key>UIRequiresFullScreen</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Aplikasi ini memerlukan akses kamera untuk panggilan video dan mengambil foto lampiran.</string>
+	<string>This app requires camera access for video calls and capturing photo attachments.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Aplikasi ini memerlukan akses mikrofon untuk panggilan suara/video dan pesan suara.</string>
+	<string>This app requires microphone access for voice and video calls, as well as sending voice messages.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Aplikasi ini memerlukan akses galeri foto untuk mengirim gambar dan media chat.</string>
+	<string>This app requires photo library access to send images and media files in chats.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Aplikasi ini memerlukan akses Bluetooth untuk menghubungkan ke headset dan perangkat audio nirkabel saat panggilan suara atau video.</string>
+	<string>This app requires Bluetooth access to connect to wireless headsets and audio accessories during voice and video calls.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>Aplikasi ini memerlukan akses Bluetooth untuk menghubungkan ke headset dan perangkat audio nirkabel saat panggilan suara atau video.</string>
+	<string>This app requires Bluetooth access to connect to wireless headsets and audio accessories during voice and video calls.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>
