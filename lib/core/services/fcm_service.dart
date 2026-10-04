@@ -7,6 +7,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:get/get.dart';
 
 import '../network/api_client.dart';
+import '../../firebase_options.dart';
 import 'logger_service.dart';
 import 'storage_service.dart';
 import '../../modules/call/controllers/call_controller.dart';
@@ -15,7 +16,11 @@ import '../../modules/call/controllers/call_controller.dart';
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
-    await Firebase.initializeApp();
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+    }
   } catch (_) {}
 
   LoggerService.i(
@@ -81,7 +86,9 @@ class FcmService extends GetxService {
   Future<FcmService> init() async {
     try {
       if (Firebase.apps.isEmpty) {
-        await Firebase.initializeApp();
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
       }
       _isFirebaseAvailable = true;
       LoggerService.i('Firebase initialized successfully in Flutter', tag: 'FcmService');
