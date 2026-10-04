@@ -54,17 +54,6 @@ jobs:
       update_pubspec: false
       upload_to_play_store: ${{ github.event_name == 'workflow_run' || inputs.upload_to_play_store == true }}
       track: ${{ inputs.track || 'internal' }}
-      env_content: |
-        API_BASE_URL=${{ vars.API_BASE_URL }}
-        WS_BASE_URL=${{ vars.WS_BASE_URL }}
-        STUN_URL=${{ vars.STUN_URL }}
-        TURN_URL=${{ vars.TURN_URL }}
-        TURN_USERNAME=${{ vars.TURN_USERNAME }}
-        TURN_CREDENTIAL=${{ secrets.TURN_CREDENTIAL }}
-        GOOGLE_SERVER_CLIENT_ID=${{ vars.GOOGLE_SERVER_CLIENT_ID }}
-        GOOGLE_IOS_CLIENT_ID=${{ vars.GOOGLE_IOS_CLIENT_ID }}
-        ENABLE_APPLE_SIGN_IN=${{ vars.ENABLE_APPLE_SIGN_IN }}
-        LOKI_URL=${{ vars.LOKI_URL }}
     secrets:
       ENV_FILE: ${{ secrets.ENV_FILE }}
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
